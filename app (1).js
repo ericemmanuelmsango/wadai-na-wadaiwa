@@ -112,6 +112,10 @@ function loadState() {
           STATE.profiles = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           PROFILES_LOADED = true;
           rerender();
+        }, () => {
+          UI.err = "Access denied by the database. Your Firestore security rules may not be published correctly yet.";
+          PROFILES_LOADED = true;
+          rerender();
         });
       }
       if (!dataUnsub) {
@@ -197,7 +201,10 @@ function render() {
   renderCharts();
 }
 function loadingScreen() {
-  return `<div class="login-wrap"><p style="color:#fff">Connecting to your data...</p></div>`;
+  return `<div class="login-wrap"><div class="login-card" style="text-align:center">
+    <p style="color:#172033">Connecting to your data...</p>
+    ${UI.err ? `<p class="login-error" style="margin-top:10px">${esc(UI.err)}</p>` : ""}
+  </div></div>`;
 }
 
 function renderSetupNotice() {
@@ -1398,3 +1405,9 @@ function renderCharts() {
 /* ---------- boot ---------- */
 loadState();
 render();
+setTimeout(() => {
+  if (CONFIG_IS_SET && (!META_LOADED || !AUTH_READY || (AUTH_USER && (!STATE_LOADED || !PROFILES_LOADED)))) {
+    UI.err = "This is taking too long. Your Firestore database or security rules may not be set up correctly yet — check Firebase Console.";
+    rerender();
+  }
+}, 8000);
