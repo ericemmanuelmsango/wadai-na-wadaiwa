@@ -10,12 +10,12 @@
    Everything else in this file already knows what to do with it.
 ==================================================================== */
 const firebaseConfig = {
-  apiKey: "PASTE_YOUR_API_KEY_HERE",
-  authDomain: "PASTE_YOUR_PROJECT.firebaseapp.com",
-  projectId: "PASTE_YOUR_PROJECT_ID",
-  storageBucket: "PASTE_YOUR_PROJECT.appspot.com",
-  messagingSenderId: "PASTE_YOUR_SENDER_ID",
-  appId: "PASTE_YOUR_APP_ID",
+  apiKey: "AIzaSyCgoZC_HGNZfcDgnyNRd6-rKdpZy1MIIiM",
+  authDomain: "shem-rogart-motor-spair-parts.firebaseapp.com",
+  projectId: "shem-rogart-motor-spair-parts",
+  storageBucket: "shem-rogart-motor-spair-parts.firebasestorage.app",
+  messagingSenderId: "94440416659",
+  appId: "1:94440416659:web:73df8a204f7b86a016f466",
 };
 
 const CONFIG_IS_SET = firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith("PASTE_");
