@@ -22,24 +22,16 @@ const CONFIG_IS_SET = firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith
 let db = null;
 let auth = null;
 let docRef = null;
-let profilesRef = null;
 if (CONFIG_IS_SET) {
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
   auth = firebase.auth();
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
-  profilesRef = db.collection("profiles");
 }
 
-let STATE = { profiles: [], entries: [], products: [], stockItems: [], stockMovements: [], settings: { reportsPassword: "eric1234" } };
+let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
-let PROFILES_LOADED = false;
 let AUTH_READY = false;
-let META_LOADED = false;
-let SETUP_DONE = false;
-let profilesUnsub = null;
-let dataUnsub = null;
-let AUTH_USER = null; // firebase auth user object (or null)
 let UI = {
   page: "dashboard",
   search: "",
@@ -54,9 +46,7 @@ let UI = {
   changeMsg: null,
   userMsg: null,
   err: null,
-  newUserRole: "staff",
   addItemsTo: null,
-  resetUserId: null,
   financialsUnlocked: false,
   finPasswordInput: "",
   finPasswordError: null,
@@ -64,8 +54,6 @@ let UI = {
   dispatchForm: null,
   deliveryNoteId: null,
   editingLimitId: null,
-  newUserCanViewFinancials: false,
-  finSettingsMsg: null,
 };
 let notifiedKeys = new Set();
 let charts = {};
@@ -97,51 +85,34 @@ function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").repla
 
 function loadState() {
   if (!CONFIG_IS_SET) return;
-  db.collection("meta").doc("setup").get().then((doc) => {
-    SETUP_DONE = doc.exists && doc.data().initialized === true;
-    META_LOADED = true;
-    rerender();
-  }).catch(() => { SETUP_DONE = false; META_LOADED = true; rerender(); });
-
-  auth.onAuthStateChanged((u) => {
-    AUTH_USER = u;
+  // Sign in anonymously in the background — invisible to the user — purely so
+  // Firestore's security rules can require "someone went through our app" and
+  // block raw outside access. The real gate the user sees is the app password below.
+  auth.signInAnonymously().catch(() => {
+    UI.err = "Could not connect to the cloud database. Check your internet connection.";
     AUTH_READY = true;
-    if (u) {
-      if (!profilesUnsub) {
-        profilesUnsub = profilesRef.onSnapshot((snap) => {
-          STATE.profiles = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          PROFILES_LOADED = true;
-          rerender();
-        }, () => {
-          UI.err = "Access denied by the database. Your Firestore security rules may not be published correctly yet.";
-          PROFILES_LOADED = true;
-          rerender();
-        });
-      }
-      if (!dataUnsub) {
-        dataUnsub = docRef.onSnapshot((doc) => {
-          const data = doc.exists ? doc.data() : {};
-          STATE.entries = data.entries || [];
-          STATE.products = data.products || [];
-          STATE.stockItems = data.stockItems || [];
-          STATE.stockMovements = data.stockMovements || [];
-          STATE.settings = data.settings || { reportsPassword: "eric1234" };
-          const wasLoaded = STATE_LOADED;
-          STATE_LOADED = true;
-          if (wasLoaded) checkAlertsForNotification();
-          rerender();
-        }, () => {
-          UI.err = "Could not connect to the cloud database. Check your internet connection.";
-          STATE_LOADED = true;
-          rerender();
-        });
-      }
-    } else {
-      if (profilesUnsub) { profilesUnsub(); profilesUnsub = null; }
-      if (dataUnsub) { dataUnsub(); dataUnsub = null; }
-      STATE.profiles = [];
-      PROFILES_LOADED = false;
-      STATE_LOADED = false;
+    rerender();
+  });
+  auth.onAuthStateChanged((u) => {
+    if (!u) return;
+    AUTH_READY = true;
+    if (!docRef._unsub) {
+      docRef._unsub = docRef.onSnapshot((doc) => {
+        const data = doc.exists ? doc.data() : {};
+        STATE.entries = data.entries || [];
+        STATE.products = data.products || [];
+        STATE.stockItems = data.stockItems || [];
+        STATE.stockMovements = data.stockMovements || [];
+        STATE.settings = data.settings || { appPassword: null, reportsPassword: "eric1234" };
+        const wasLoaded = STATE_LOADED;
+        STATE_LOADED = true;
+        if (wasLoaded) checkAlertsForNotification();
+        rerender();
+      }, () => {
+        UI.err = "Access denied by the database. Check your Firestore security rules.";
+        STATE_LOADED = true;
+        rerender();
+      });
     }
     rerender();
   });
@@ -151,10 +122,6 @@ function saveProducts() { if (docRef) docRef.set({ products: STATE.products }, {
 function saveStockItems() { if (docRef) docRef.set({ stockItems: STATE.stockItems }, { merge: true }); }
 function saveStockMovements() { if (docRef) docRef.set({ stockMovements: STATE.stockMovements }, { merge: true }); }
 function saveSettings() { if (docRef) docRef.set({ settings: STATE.settings }, { merge: true }); }
-function currentUser() {
-  if (!AUTH_USER) return null;
-  return STATE.profiles.find((p) => p.id === AUTH_USER.uid) || null;
-}
 
 /* ---------- render with focus preservation ---------- */
 function rerender() {
@@ -180,24 +147,19 @@ function render() {
     root.innerHTML = renderSetupNotice();
     return;
   }
-  if (!META_LOADED || !AUTH_READY) {
+  if (!AUTH_READY || !STATE_LOADED) {
     root.innerHTML = loadingScreen();
     return;
   }
-  if (!AUTH_USER) {
-    root.innerHTML = renderLogin(SETUP_DONE ? "login" : "setup");
+  if (!STATE.settings.appPassword) {
+    root.innerHTML = renderLogin("setup");
     return;
   }
-  if (!STATE_LOADED || !PROFILES_LOADED) {
-    root.innerHTML = loadingScreen();
+  if (!appUnlocked()) {
+    root.innerHTML = renderLogin("login");
     return;
   }
-  const user = currentUser();
-  if (!user) {
-    root.innerHTML = loadingScreen();
-    return;
-  }
-  root.innerHTML = renderShell(user);
+  root.innerHTML = renderShell();
   renderCharts();
 }
 function loadingScreen() {
@@ -223,101 +185,56 @@ function renderSetupNotice() {
   </div>`;
 }
 
-/* ---------- LOGIN ---------- */
+/* ---------- LOGIN (one shared app password) ---------- */
+function appUnlocked() { return localStorage.getItem("ww_unlocked") === "1"; }
+
 function renderLogin(mode) {
   return `
   <div class="login-wrap">
     <div class="login-card">
       <div class="login-mark">EE</div>
       <h1>E.E.MSANGO COMPANY LIMITED</h1>
-      <p class="login-sub">${mode === "setup" ? "Create the first admin account to secure your system" : "Sign in to continue"}</p>
-      ${mode === "setup" ? `<input id="login-name" class="field" placeholder="Your name">` : ""}
-      <input id="login-email" class="field" type="email" placeholder="Email address">
-      <input id="login-password" class="field" type="password" placeholder="Password" onkeydown="if(event.key==='Enter'){${mode === "setup" ? "" : "handleLogin();"}}">
-      ${mode === "setup" ? `<input id="login-password2" class="field" type="password" placeholder="Confirm Password">` : ""}
+      <p class="login-sub">${mode === "setup" ? "Set the password that will protect your system" : "Enter the password to continue"}</p>
+      <input id="login-password" class="field" type="password" placeholder="Password" onkeydown="if(event.key==='Enter'){${mode === "setup" ? "handleSetup();" : "handleLogin();"}}">
+      ${mode === "setup" ? `<input id="login-password2" class="field" type="password" placeholder="Confirm Password" onkeydown="if(event.key==='Enter')handleSetup();">` : ""}
       ${UI.authError ? `<p class="login-error">${esc(UI.authError)}</p>` : ""}
       <button class="btn btn-primary btn-block" onclick="${mode === "setup" ? "handleSetup()" : "handleLogin()"}">
-        ${mode === "setup" ? "Create Admin Account" : "Sign In"}
+        ${mode === "setup" ? "Set Password" : "Enter"}
       </button>
-      ${mode === "login" ? `<button class="btn btn-ghost btn-block" style="margin-top:4px" onclick="handleForgotPassword()">Forgot password?</button>` : ""}
     </div>
   </div>`;
 }
 
-function friendlyAuthError(code) {
-  const map = {
-    "auth/invalid-email": "That email address doesn't look right.",
-    "auth/user-not-found": "No account found with that email.",
-    "auth/wrong-password": "Incorrect email or password.",
-    "auth/invalid-login-credentials": "Incorrect email or password.",
-    "auth/invalid-credential": "Incorrect email or password.",
-    "auth/email-already-in-use": "An account with that email already exists.",
-    "auth/weak-password": "Password must be at least 6 characters.",
-    "auth/network-request-failed": "Network error. Check your internet connection.",
-    "auth/too-many-requests": "Too many attempts. Please wait a moment and try again.",
-  };
-  return map[code] || "Something went wrong. Please try again.";
-}
-
 function handleSetup() {
-  const name = document.getElementById("login-name").value.trim();
-  const email = document.getElementById("login-email").value.trim();
   const pw = document.getElementById("login-password").value;
   const pw2 = document.getElementById("login-password2").value;
   UI.authError = null;
-  if (!name || !email) { UI.authError = "Please enter your name and email."; return rerender(); }
-  if (!pw || pw.length < 6) { UI.authError = "Password must be at least 6 characters."; return rerender(); }
+  if (!pw || pw.length < 4) { UI.authError = "Password must be at least 4 characters."; return rerender(); }
   if (pw !== pw2) { UI.authError = "Passwords do not match."; return rerender(); }
-
-  auth.createUserWithEmailAndPassword(email, pw).then((cred) => {
-    return Promise.all([
-      profilesRef.doc(cred.user.uid).set({ name, email, role: "admin", canViewFinancials: true }),
-      db.collection("meta").doc("setup").set({ initialized: true }),
-    ]);
-  }).then(() => {
-    SETUP_DONE = true;
-    rerender();
-  }).catch((err) => {
-    UI.authError = friendlyAuthError(err.code);
-    rerender();
-  });
+  STATE.settings.appPassword = pw;
+  saveSettings();
+  localStorage.setItem("ww_unlocked", "1");
+  rerender();
 }
 
 function handleLogin() {
-  const email = document.getElementById("login-email").value.trim();
   const pw = document.getElementById("login-password").value;
   UI.authError = null;
-  auth.signInWithEmailAndPassword(email, pw).catch((err) => {
-    UI.authError = friendlyAuthError(err.code);
-    rerender();
-  });
-}
-
-function handleForgotPassword() {
-  const email = document.getElementById("login-email").value.trim();
-  if (!email) { UI.authError = "Type your email above first, then tap \"Forgot password?\" again."; return rerender(); }
-  auth.sendPasswordResetEmail(email).then(() => {
-    UI.authError = null;
-    UI.err = null;
-    alert("A password reset link has been sent to " + email);
-  }).catch((err) => {
-    UI.authError = friendlyAuthError(err.code);
-    rerender();
-  });
+  if (pw !== STATE.settings.appPassword) { UI.authError = "Incorrect password."; return rerender(); }
+  localStorage.setItem("ww_unlocked", "1");
+  rerender();
 }
 
 function handleLogout() {
-  auth.signOut();
+  localStorage.removeItem("ww_unlocked");
   UI.page = "dashboard";
   UI.financialsUnlocked = false;
   rerender();
 }
 
-/* ---------- SHELL ---------- */
-function renderShell(user) {
+function renderShell() {
   const active = STATE.entries.filter((e) => !e.archived);
   const dueCount = active.filter((e) => dueStatus(e)).length + lowStockCount();
-  const isAdmin = user.role === "admin";
 
   const titles = {
     dashboard: ["Dashboard", "Overview of all your debts"],
@@ -327,20 +244,18 @@ function renderShell(user) {
     alerts: ["Alerts", "Everything due today or overdue"],
     products: ["Products", "Items you sell, for faster order entry"],
     mainstore: ["Main Store", "Stock received and dispatched"],
-    users: ["Users", "Manage who can access this system"],
-    settings: ["Settings", "Manage your account security"],
+    settings: ["Settings", "Manage your passwords"],
   };
   const [title, sub] = titles[UI.page] || titles.dashboard;
 
-  const canViewFinancials = isAdmin || user.canViewFinancials;
   const menuItems = [
     ["dashboard", "🏠", "Dashboard"],
-    ...(canViewFinancials ? [["owed", "👤", "Debtors"], ["owe", "💼", "Creditors"]] : []),
+    ["owed", "👤", "Debtors"],
+    ["owe", "💼", "Creditors"],
     ["products", "📦", "Products"],
     ["mainstore", "🏬", "Main Store"],
-    ...(canViewFinancials ? [["reports", "📊", "Reports"]] : []),
+    ["reports", "📊", "Reports"],
     ["alerts", "🔔", "Alerts"],
-    ...(isAdmin ? [["users", "👥", "Users"]] : []),
     ["settings", "⚙️", "Settings"],
   ];
 
@@ -369,8 +284,7 @@ function renderShell(user) {
         <div class="profile">
           <button class="bell-wrap" onclick="setPage('alerts')">🔔${dueCount > 0 ? `<span class="bell-dot">${dueCount}</span>` : ""}</button>
           <div class="avatar"></div>
-          <div><strong>${esc(user.name)}</strong><br><small>${user.role === "admin" ? "Administrator" : "Staff"}</small></div>
-          <button class="logout-btn" onclick="handleLogout()">⏻ Logout</button>
+          <button class="logout-btn" onclick="handleLogout()">⏻ Lock</button>
         </div>
       </header>
 
@@ -382,7 +296,7 @@ function renderShell(user) {
 
         ${UI.err ? `<div class="err-banner">${esc(UI.err)}<button onclick="UI.err=null;rerender();">✕</button></div>` : ""}
 
-        ${renderPage(UI.page, user, isAdmin)}
+        ${renderPage(UI.page)}
       </section>
     </main>
     ${UI.receiptEntryId ? renderReceiptModal() : ""}
@@ -395,23 +309,18 @@ function renderShell(user) {
 
 function setPage(p) { UI.page = p; UI.receiptEntryId = null; rerender(); }
 
-function renderPage(page, user, isAdmin) {
-  const canViewFinancials = isAdmin || user.canViewFinancials;
+function renderPage(page) {
   if (page === "dashboard") return renderDashboard();
-  if (page === "reports") return canViewFinancials ? guardFinancials(renderReports) : accessDenied();
+  if (page === "reports") return guardFinancials(renderReports);
   if (page === "alerts") return renderAlerts();
   if (page === "products") return renderProductsPage();
   if (page === "mainstore") return renderMainStorePage();
-  if (page === "users" && isAdmin) return renderUsersPage(user);
-  if (page === "owed") return canViewFinancials ? guardFinancials(() => renderColumnPage("owed_to_me")) : accessDenied();
-  if (page === "owe") return canViewFinancials ? guardFinancials(() => renderColumnPage("i_owe")) : accessDenied();
-  if (page === "settings") return renderSettings(user);
+  if (page === "owed") return guardFinancials(() => renderColumnPage("owed_to_me"));
+  if (page === "owe") return guardFinancials(() => renderColumnPage("i_owe"));
+  if (page === "settings") return renderSettings();
   return renderDashboard();
 }
 
-function accessDenied() {
-  return `<div class="panel"><p class="empty-note">You don't have permission to view this section. Ask an admin for access.</p></div>`;
-}
 
 function guardFinancials(renderFn) {
   if (UI.financialsUnlocked) return renderFn();
@@ -617,98 +526,17 @@ function renderReports() {
   </div>`;
 }
 
-/* ---------- USERS ---------- */
-function renderUsersPage(user) {
-  return `
-  <div class="panel">
-    <h3>Team Members</h3>
-    <div class="user-list">
-      ${STATE.profiles.map((u) => `
-        <div class="user-row">
-          <div class="user-row-main">
-            <span class="user-name">${esc(u.name)} ${u.role === "admin" ? "🛡️" : ""}</span>
-            <span class="user-detail">${esc(u.email)} · ${u.role === "admin" ? "Admin" : "Staff"}</span>
-          </div>
-          ${u.id !== user.id ? `
-            <div style="display:flex;gap:6px;align-items:center">
-              <button class="btn btn-sm btn-ghost" onclick="sendResetEmail('${esc(u.email)}')">✉️ Send Reset Link</button>
-              <button class="icon-btn" onclick="removeUser('${u.id}')">🗑️ Revoke</button>
-            </div>` : ""}
-        </div>`).join("")}
-    </div>
-  </div>
-  <div class="panel settings-panel" style="margin-top:16px">
-    <h3>➕ Add Team Member</h3>
-    <p style="font-size:12px;color:#6b7280">They'll need this email and password to sign in. They can change their own password later, or use "Forgot password?" with this email.</p>
-    <input id="nu-name" class="field" placeholder="Full name">
-    <input id="nu-email" class="field" type="email" placeholder="Their email address">
-    <input id="nu-password" class="field" type="password" placeholder="Temporary password (min 6 characters)">
-    <div class="discount-mode-toggle">
-      <span>Role:</span>
-      <button class="chip-btn ${UI.newUserRole === "staff" ? "active" : ""}" onclick="UI.newUserRole='staff';rerender();">Staff</button>
-      <button class="chip-btn ${UI.newUserRole === "admin" ? "active" : ""}" onclick="UI.newUserRole='admin';rerender();">Admin</button>
-    </div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#6b7280;margin-top:2px">
-      <input type="checkbox" ${UI.newUserCanViewFinancials ? "checked" : ""} onchange="UI.newUserCanViewFinancials=this.checked;rerender();">
-      Can access Debtors / Creditors / Reports
-    </label>
-    ${UI.userMsg && !UI.userMsg.forProduct ? `<p class="settings-msg ${UI.userMsg.ok ? "ok" : "err"}">${esc(UI.userMsg.text)}</p>` : ""}
-    <button class="btn btn-primary" onclick="addUser()">Add Member</button>
-  </div>`;
-}
-function addUser() {
-  const name = document.getElementById("nu-name").value.trim();
-  const email = document.getElementById("nu-email").value.trim();
-  const password = document.getElementById("nu-password").value;
-  UI.userMsg = null;
-  if (!name || !email || !password) { UI.userMsg = { ok: false, text: "All fields are required." }; return rerender(); }
-  if (password.length < 6) { UI.userMsg = { ok: false, text: "Password must be at least 6 characters." }; return rerender(); }
-
-  // Use a secondary, throwaway Firebase app instance so creating this account
-  // doesn't sign the admin out of their own session.
-  const secondary = firebase.initializeApp(firebaseConfig, "Secondary_" + Date.now());
-  secondary.auth().createUserWithEmailAndPassword(email, password).then((cred) => {
-    return db.collection("profiles").doc(cred.user.uid).set({
-      name, email, role: UI.newUserRole, canViewFinancials: UI.newUserCanViewFinancials,
-    }).then(() => secondary.auth().signOut());
-  }).then(() => {
-    secondary.delete();
-    UI.userMsg = { ok: true, text: `${name} added. Share the email and password with them.` };
-    UI.newUserCanViewFinancials = false;
-    rerender();
-  }).catch((err) => {
-    secondary.delete();
-    UI.userMsg = { ok: false, text: friendlyAuthError(err.code) };
-    rerender();
-  });
-}
-function sendResetEmail(email) {
-  auth.sendPasswordResetEmail(email).then(() => {
-    UI.userMsg = { ok: true, text: `Reset link sent to ${email}.` };
-    rerender();
-  }).catch((err) => {
-    UI.userMsg = { ok: false, text: friendlyAuthError(err.code) };
-    rerender();
-  });
-}
-function removeUser(id) {
-  // This revokes their access to the app's data (their sign-in still exists,
-  // but without a profile document, the security rules block them from
-  // reading or writing anything).
-  profilesRef.doc(id).delete();
-}
-
 /* ---------- SETTINGS ---------- */
-function renderSettings(user) {
+function renderSettings() {
   const notifStatus = ("Notification" in window) ? Notification.permission : "unsupported";
   return `
   <div class="panel settings-panel">
-    <h3>Change My Password</h3>
-    <input id="cp-old" class="field" type="password" placeholder="Current password">
-    <input id="cp-new" class="field" type="password" placeholder="New password">
-    <input id="cp-new2" class="field" type="password" placeholder="Confirm new password">
+    <h3>🔒 App Password</h3>
+    <p style="font-size:12px;color:#6b7280">This is the password anyone needs to open this system.</p>
+    <input id="ap-current" class="field" type="password" placeholder="Current app password">
+    <input id="ap-new" class="field" type="password" placeholder="New app password">
     ${UI.changeMsg ? `<p class="settings-msg ${UI.changeMsg.ok ? "ok" : "err"}">${esc(UI.changeMsg.text)}</p>` : ""}
-    <button class="btn btn-primary" onclick="changePassword()">Save New Password</button>
+    <button class="btn btn-primary" onclick="changeAppPassword()">Save New App Password</button>
   </div>
 
   <div class="panel settings-panel" style="margin-top:16px">
@@ -718,15 +546,14 @@ function renderSettings(user) {
     <button class="btn btn-primary" onclick="enableNotifications()">Enable Alerts</button>
   </div>
 
-  ${user.role === "admin" ? `
   <div class="panel settings-panel" style="margin-top:16px">
     <h3>🔒 Reports Password</h3>
-    <p style="font-size:12px;color:#6b7280">This password protects Debtors, Creditors and Reports.</p>
+    <p style="font-size:12px;color:#6b7280">This separate password protects Debtors, Creditors and Reports specifically.</p>
     <input id="fp-current" class="field" type="password" placeholder="Current reports password">
     <input id="fp-new" class="field" type="password" placeholder="New reports password">
     ${UI.finSettingsMsg ? `<p class="settings-msg ${UI.finSettingsMsg.ok ? "ok" : "err"}">${esc(UI.finSettingsMsg.text)}</p>` : ""}
     <button class="btn btn-primary" onclick="changeReportsPassword()">Save Reports Password</button>
-  </div>` : ""}`;
+  </div>`;
 }
 function enableNotifications() {
   if (!("Notification" in window)) { UI.err = "Your browser does not support notifications."; return rerender(); }
@@ -742,25 +569,16 @@ function changeReportsPassword() {
   UI.finSettingsMsg = { ok: true, text: "Reports password updated." };
   rerender();
 }
-function changePassword() {
-  const user = currentUser();
-  const oldPw = document.getElementById("cp-old").value;
-  const newPw = document.getElementById("cp-new").value;
-  const newPw2 = document.getElementById("cp-new2").value;
+function changeAppPassword() {
+  const current = document.getElementById("ap-current").value;
+  const next = document.getElementById("ap-new").value;
   UI.changeMsg = null;
-  if (!newPw || newPw.length < 6) { UI.changeMsg = { ok: false, text: "New password must be at least 6 characters." }; return rerender(); }
-  if (newPw !== newPw2) { UI.changeMsg = { ok: false, text: "New passwords do not match." }; return rerender(); }
-
-  const credential = firebase.auth.EmailAuthProvider.credential(user.email, oldPw);
-  AUTH_USER.reauthenticateWithCredential(credential).then(() => {
-    return AUTH_USER.updatePassword(newPw);
-  }).then(() => {
-    UI.changeMsg = { ok: true, text: "Password changed." };
-    rerender();
-  }).catch((err) => {
-    UI.changeMsg = { ok: false, text: friendlyAuthError(err.code) };
-    rerender();
-  });
+  if (current !== STATE.settings.appPassword) { UI.changeMsg = { ok: false, text: "Current app password is incorrect." }; return rerender(); }
+  if (!next || next.length < 4) { UI.changeMsg = { ok: false, text: "New password must be at least 4 characters." }; return rerender(); }
+  STATE.settings.appPassword = next;
+  saveSettings();
+  UI.changeMsg = { ok: true, text: "App password updated." };
+  rerender();
 }
 
 /* ---------- COLUMN PAGE (Debtors / Creditors) ---------- */
@@ -1406,8 +1224,8 @@ function renderCharts() {
 loadState();
 render();
 setTimeout(() => {
-  if (CONFIG_IS_SET && (!META_LOADED || !AUTH_READY || (AUTH_USER && (!STATE_LOADED || !PROFILES_LOADED)))) {
-    UI.err = "This is taking too long. Your Firestore database or security rules may not be set up correctly yet — check Firebase Console.";
+  if (CONFIG_IS_SET && (!AUTH_READY || !STATE_LOADED)) {
+    UI.err = "This is taking too long. Check your Firestore database and security rules in Firebase Console.";
     rerender();
   }
 }, 8000);
