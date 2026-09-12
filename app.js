@@ -1715,7 +1715,42 @@ const BULK_PRODUCTS = [
   { name: "GEAR LIVER SET MTB", price: 30000 },
   { name: "GEAR LIVER SINO GN", price: 3000 },
   { name: "GEAR LIVER SINO GUTTA", price: 8000 },
-  { name: "GEAR PLASTIC", price: 3500 }
+  { name: "GEAR PLASTIC", price: 3500 },
+  { name: "RADIO TOP/KING", price: 22000 },
+  { name: "REAR COVER RED SINO", price: 19000 },
+  { name: "RECT FIRE SINO GN", price: 6000 },
+  { name: "RECT FIRE SINO GUTA", price: 10000 },
+  { name: "RECTFIRE BM", price: 8000 },
+  { name: "RECTFIRE GN", price: 3500 },
+  { name: "RECTFIRE GUTA", price: 9000 },
+  { name: "RECTFIRE HAIROD", price: 4500 },
+  { name: "RECTFIRE KINGLION", price: 6000 },
+  { name: "RECTFIRE TAW", price: 5000 },
+  { name: "RECTFIRE TVS 150", price: 8000 },
+  { name: "RECTIFIER SINO 150", price: 7000 },
+  { name: "RECTIFIRE BM G5", price: 10000 },
+  { name: "REFLCTOR WAKA", price: 3500 },
+  { name: "REJECTOR", price: 110000 },
+  { name: "RELAY", price: 3000 },
+  { name: "RELAY BM", price: 6000 },
+  { name: "RELAY BMX125", price: 10000 },
+  { name: "RELAY RGM", price: 3500 },
+  { name: "RELAY SINO", price: 5000 },
+  { name: "REPAIR KITI BM", price: 3000 },
+  { name: "REPEA KIT GN", price: 2000 },
+  { name: "RIFLECTER MSHALE", price: 1000 },
+  { name: "RIFLECTOR NO 10 SINO", price: 1000 },
+  { name: "RIFLECTOR NO10", price: 500 },
+  { name: "RIFLECTOR NO8", price: 500 },
+  { name: "RIFLECTOR SHOKUP", price: 500 },
+  { name: "RIM ALLM SZ20", price: 6500 },
+  { name: "RIM BM F BLACK", price: 65000 },
+  { name: "RIM BM F SILVER", price: 65000 },
+  { name: "RIM BM R BLACK", price: 65000 },
+  { name: "RIM BM R SILVER", price: 65000 },
+  { name: "RIM CG", price: 66000 },
+  { name: "RIM GUTA", price: 40000 },
+  { name: "RIM MTB ALMNM", price: 10000 }
 ];
 
 function renderProductsPage() {
@@ -2586,13 +2621,20 @@ function renderMainStorePage() {
   </div>` : ""}
 
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <h3 style="margin:0">Current Stock</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${receiveOpen || dispatchOpen ? "0" : "10px"}">
+      <h3 style="margin:0">📥📤 Receive / Dispatch Stock</h3>
+      ${!receiveOpen && !dispatchOpen ? `
       <div style="display:flex;gap:8px">
         <button class="btn btn-sm btn-primary" onclick="startReceiveStock()">📥 Receive Stock</button>
         <button class="btn btn-sm btn-primary" onclick="startDispatchStock()">📤 Dispatch Stock</button>
-      </div>
+      </div>` : ""}
     </div>
+    ${receiveOpen ? renderReceiveForm() : ""}
+    ${dispatchOpen ? renderDispatchForm() : ""}
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h3 style="margin:0 0 10px">Current Stock</h3>
     ${STATE.stockItems.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : `
     <table class="recent-table" style="width:100%">
       <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
@@ -2615,9 +2657,6 @@ function renderMainStorePage() {
       </tbody>
     </table>`}
   </div>
-
-  ${receiveOpen ? renderReceiveForm() : ""}
-  ${dispatchOpen ? renderDispatchForm() : ""}
 
   <div class="panel" style="margin-top:16px">
     <h3>Recent Stock Movements</h3>
