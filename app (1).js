@@ -62,6 +62,8 @@ let UI = {
   saleMsg: null,
   plFrom: "",
   plTo: "",
+  editingMovementId: null,
+  logoMsg: null,
 };
 let notifiedKeys = new Set();
 let charts = {};
@@ -104,6 +106,31 @@ function logoSvg(size) {
     <circle cx="50" cy="50" r="33" fill="#0d2038"/>
     <text x="50" y="59" font-family="Georgia, serif" font-size="30" font-weight="700" fill="#fff" text-anchor="middle">EE</text>
   </svg>`;
+}
+function companyLogo(size) {
+  if (STATE.settings && STATE.settings.logoBase64) {
+    return `<img src="${STATE.settings.logoBase64}" style="width:${size}px;height:${size}px;object-fit:contain;border-radius:${Math.round(size * 0.2)}px">`;
+  }
+  return logoSvg(size);
+}
+function handleLogoUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 700000) { UI.logoMsg = { ok: false, text: "Please choose an image smaller than 700KB." }; return rerender(); }
+  const reader = new FileReader();
+  reader.onload = () => {
+    STATE.settings.logoBase64 = reader.result;
+    saveSettings();
+    UI.logoMsg = { ok: true, text: "Logo updated." };
+    rerender();
+  };
+  reader.readAsDataURL(file);
+}
+function removeLogo() {
+  STATE.settings.logoBase64 = null;
+  saveSettings();
+  UI.logoMsg = { ok: true, text: "Removed — using default logo." };
+  rerender();
 }
 
 function loadState() {
@@ -217,7 +244,7 @@ function renderLogin(mode) {
   return `
   <div class="login-wrap">
     <div class="login-card">
-      <div class="login-mark">${logoSvg(52)}</div>
+      <div class="login-mark">${companyLogo(52)}</div>
       <h1>E.E.MSANGO COMPANY LIMITED</h1>
       <p class="login-sub">${mode === "setup" ? "Set the password that will protect your system" : "Enter the password to continue"}</p>
       <input id="login-password" class="field" type="password" placeholder="Password" onkeydown="if(event.key==='Enter'){${mode === "setup" ? "handleSetup();" : "handleLogin();"}}">
@@ -290,7 +317,7 @@ function renderShell() {
   <div class="shell">
     <aside class="sidebar">
       <div class="logo">
-        <div class="logo-mark">${logoSvg(38)}</div>
+        <div class="logo-mark">${companyLogo(38)}</div>
         <div><h2>E.E.MSANGO CO. LTD</h2><small>Manage • Track • Grow</small></div>
       </div>
       <ul class="menu">
@@ -1237,7 +1264,458 @@ const BULK_PRODUCTS = [
   { name: "NALI PLASTIC", price: 500 },
   { name: "NAT SEAT GN", price: 500 },
   { name: "NATI NO 17 NA 19", price: 300 },
-  { name: "NATI OIL BM", price: 1500 }
+  { name: "NATI OIL BM", price: 1500 },
+  { name: "FRAWIL T16 PH", price: 2500 },
+  { name: "FRAWIL T18 PH", price: 2500 },
+  { name: "FRAWIL T20", price: 2500 },
+  { name: "FREM GN", price: 135000 },
+  { name: "FRENJ HUB GUTA", price: 38000 },
+  { name: "FRENJA HUB BLACK", price: 13000 },
+  { name: "FRENJA HUB BM 150", price: 12000 },
+  { name: "FRENJA HUB CG", price: 9000 },
+  { name: "FRENJA HUB GN", price: 9000 },
+  { name: "FRENJA HUB TVS", price: 15000 },
+  { name: "FRONT MAD FLAPER", price: 800 },
+  { name: "FULL BREAK CHOMEKA", price: 6500 },
+  { name: "FULL BREAK MTB NDEFU", price: 4500 },
+  { name: "FULL BREAK PH", price: 7000 },
+  { name: "FULL BREAK SPORT MKASI", price: 8000 },
+  { name: "GASKET A 150", price: 1500 },
+  { name: "GASKET A BLOCK TVS", price: 500 },
+  { name: "GASKET A CC200", price: 3500 },
+  { name: "GASKET A CC250 GUTA", price: 3500 },
+  { name: "GASKET BIG FULL 125", price: 2500 },
+  { name: "GASKET BIG FULL 150", price: 2500 },
+  { name: "GASKET BLOCK 125", price: 500 },
+  { name: "GASKET BLOCK 150 GN", price: 500 },
+  { name: "GASKET BLOCK BM", price: 500 },
+  { name: "GASKET BLOCK TVS", price: 500 },
+  { name: "GASKET CLUCH BM", price: 500 },
+  { name: "GASKET CLUCH GN", price: 500 },
+  { name: "GASKET CLUTCH BMX125", price: 500 },
+  { name: "GASKET CLUTCH SINO", price: 1500 },
+  { name: "GASKET CLUTCH TVS", price: 500 },
+  { name: "GASKET COIL", price: 500 },
+  { name: "GASKET COIL BJ 100", price: 1000 },
+  { name: "GASKET COIL BM", price: 500 },
+  { name: "GASKET COIL BMX125", price: 500 },
+  { name: "GASKET COIL TVS", price: 500 },
+  { name: "OIL TOP", price: 6200 },
+  { name: "OIL TOTAL", price: 9000 },
+  { name: "OKO BIG CTN", price: 55000 },
+  { name: "OKO BIG SAL", price: 2000 },
+  { name: "OKO NDOGO CTN", price: 72000 },
+  { name: "OKO NDOGO SAL", price: 1500 },
+  { name: "OPENA GEAR BM", price: 5000 },
+  { name: "OPENA GEAR CBF", price: 6000 },
+  { name: "OPENA GEAR CG", price: 3500 },
+  { name: "OPENA GEAR GN", price: 3500 },
+  { name: "OPENA GEAR GUTA", price: 6000 },
+  { name: "OPENA GEAR KING", price: 6000 },
+  { name: "OPENA GEAR SINO GN", price: 6000 },
+  { name: "OPENA GEAR TVS", price: 5000 },
+  { name: "ORXY", price: 8000 },
+  { name: "ORXY CTN", price: 190000 },
+  { name: "PASS BREAK GN", price: 8000 },
+  { name: "PEDAL MTB", price: 3500 },
+  { name: "PEDAL MTB ALMNM", price: 5000 },
+  { name: "PEDAL MTB MSUMARI MDOGO", price: 3500 },
+  { name: "PEDAL MTB SKY", price: 3000 },
+  { name: "PEDAL PH", price: 4000 },
+  { name: "PEDAL SEWA", price: 3000 },
+  { name: "PEDAL TOTO", price: 3000 },
+  { name: "PEDEL SILVER", price: 8000 },
+  { name: "PINION SINO T11", price: 20000 },
+  { name: "PINION T10", price: 27000 },
+  { name: "PINION T11 NDEFU", price: 10000 },
+  { name: "PINION T12", price: 10000 },
+  { name: "PINION T13 NDEFU", price: 10000 },
+  { name: "PINION T17", price: 17000 },
+  { name: "PIPE CALP", price: 3500 },
+  { name: "PIPE HYDROLIC GUTA NDEFU", price: 5000 },
+  { name: "PIPE HYDROLIC GUTA FUPI", price: 5000 },
+  { name: "PIPE KATA", price: 500 },
+  { name: "MAGNETO SMAKU SINO GN", price: 20000 },
+  { name: "MAGNETO SMAKU SINO GUTA", price: 35000 },
+  { name: "MAGNETO SUMAKU BM 150", price: 35000 },
+  { name: "MAGNETO SUMAKU KINGLION", price: 17000 },
+  { name: "MAIN FORD BM", price: 3500 },
+  { name: "MAIN FORD GN", price: 2000 },
+  { name: "MAIN FORD GUTA", price: 2500 },
+  { name: "MAIN FORD SINO", price: 4000 },
+  { name: "MAJI BETRI BARID", price: 17000 },
+  { name: "MASHINE BULB", price: 165000 },
+  { name: "MASIKIO CG", price: 1200 },
+  { name: "MASIKIO INDICATOR GN", price: 1200 },
+  { name: "MASIKIO PH BREAK", price: 15000 },
+  { name: "MASK", price: 8000 },
+  { name: "MASKIO PH", price: 12000 },
+  { name: "MASKIO TAA F", price: 6000 },
+  { name: "MASKIO TAA MAYAI SINO", price: 12000 },
+  { name: "MASTER GUTA SINO", price: 22000 },
+  { name: "MBERA NDEFU", price: 500 },
+  { name: "MBERA NO 10 BLUE", price: 1000 },
+  { name: "MBERA NO 10 GOLD", price: 1000 },
+  { name: "MBERA NO 10 NDEFU", price: 500 },
+  { name: "MBERA NO 10 NDEFU RANGI", price: 1000 },
+  { name: "MBERA NO 13 NDEFU", price: 500 },
+  { name: "MENO SET GUTTA", price: 13000 },
+  { name: "MFUNIKO COVER COIL", price: 2500 },
+  { name: "MFUNIKO OIL BM", price: 1200 },
+  { name: "MFUNIKO OIL TVS", price: 2000 },
+  { name: "MFUNIKO TANG BM", price: 7000 },
+  { name: "MFUNIKO TANG CG", price: 2500 },
+  { name: "MFUNIKO TANG GN", price: 3500 },
+  { name: "MFUNIKO TANG TVS", price: 6000 },
+  { name: "MFUNIKO TANG YAI", price: 10000 },
+  { name: "MFUNIKO TANK GUTA", price: 10000 },
+  { name: "MFUNIKO TANK MAYAYI", price: 10000 },
+  { name: "PLUG GENARETOR", price: 1200 },
+  { name: "PLUG GN", price: 1000 },
+  { name: "PLUG SINORAY", price: 1200 },
+  { name: "PLUG SINORAY TVS", price: 2500 },
+  { name: "PLUG SPARK INDIA", price: 1300 },
+  { name: "PLUG TAW", price: 1400 },
+  { name: "PLUG TVS BAJAJI", price: 1300 },
+  { name: "PLUG TVS CROCODILE", price: 1300 },
+  { name: "PLUG TVS IRIDIUM", price: 1300 },
+  { name: "PLUG TVS ONLY", price: 1300 },
+  { name: "PLUG TVS SONLIK", price: 1300 },
+  { name: "PLUG YOG", price: 1300 },
+  { name: "PRIZA PIPE", price: 1500 },
+  { name: "PUMP BIG BLACK", price: 11000 },
+  { name: "PUMP BIG PLASTIK", price: 9000 },
+  { name: "PUMP BLAC NDOG", price: 6000 },
+  { name: "PUMP MTUNGI", price: 10000 },
+  { name: "PUMP T MTUNGI", price: 5500 },
+  { name: "PUMP T NDOGO", price: 4000 },
+  { name: "PUSH ROAD GN", price: 2000 },
+  { name: "PUSH ROAD GUTA", price: 6000 },
+  { name: "R P M CABLE GN", price: 1200 },
+  { name: "RABA BREAK BLACK ALNKEY", price: 10000 },
+  { name: "RABA BREAK CHOMEKA", price: 9000 },
+  { name: "RABA BREAK PH", price: 6000 },
+  { name: "RABA BREAK RAHISI ALNKEY", price: 9000 },
+  { name: "RABA BREAK SPORT", price: 5000 },
+  { name: "RABA BREK MTUMBA", price: 4000 },
+  { name: "RABA FOOT REST BM", price: 2500 },
+  { name: "RABA FOOT REST RANGI BM", price: 4000 },
+  { name: "RABA TOP COVER BM", price: 1000 },
+  { name: "RADIO BIG FUNGUO", price: 25000 },
+  { name: "RADIO BLUETOOTH TAXI", price: 15000 },
+  { name: "RADIO SINO", price: 21000 },
+  { name: "RADIO SPIKA RAOUND", price: 25000 },
+  { name: "PIPE SHOKUP BM", price: 20000 },
+  { name: "PISTON KITI AUJW", price: 8000 },
+  { name: "PISTON 180 SINO", price: 170000 },
+  { name: "PISTON CC200 SINO", price: 20000 },
+  { name: "PISTON KIT 150 TVS", price: 8000 },
+  { name: "PISTON KIT 150+", price: 6000 },
+  { name: "PISTON KIT 150++", price: 6000 },
+  { name: "PISTON KIT AUJIO 125", price: 8000 },
+  { name: "PISTON KIT BMX 125", price: 8000 },
+  { name: "PISTON KIT CBF 150", price: 12000 },
+  { name: "PISTON KITI BM 150 PLUS2", price: 6000 },
+  { name: "PISTON KITI CC200 SINO ONLY", price: 11000 },
+  { name: "PISTON KITI 125 BMX PLUS1", price: 8000 },
+  { name: "PISTON KITI 125 BMX PLUS2", price: 8000 },
+  { name: "PISTON KITI 125 GN", price: 6000 },
+  { name: "PISTON KITI 125 TAW", price: 8000 },
+  { name: "PISTON KITI 125 TVS", price: 10000 },
+  { name: "PISTON KITI 150 YUAO", price: 6500 },
+  { name: "PISTON KITI BM 150 PLUS1", price: 8000 },
+  { name: "PISTON KITI CC200 KAWAIDA", price: 10000 },
+  { name: "PISTON KITI KING 150", price: 11000 },
+  { name: "PISTON KITI KING CBF", price: 18000 },
+  { name: "PISTON KITI KLP9A++", price: 12000 },
+  { name: "PISTON KITI P9 KINGLION", price: 12000 },
+  { name: "PISTON KITI SINO 150", price: 9000 },
+  { name: "PISTON KITI SINO 250", price: 11000 },
+  { name: "PISTON KITI TAW 150", price: 8500 },
+  { name: "PISTON KITI TIMEN CHAIN", price: 12000 },
+  { name: "PLATE CLUTCH GUTA", price: 6000 },
+  { name: "PLATE CLUTCH KING", price: 5000 },
+  { name: "PLATE CLUTCH TVS", price: 3500 },
+  { name: "PLET DISC", price: 1500 },
+  { name: "PLUG SINO TVS", price: 2500 },
+  { name: "PLUG BM", price: 1400 },
+  { name: "PLUG BM TAW", price: 1500 },
+  { name: "BOOT RUBER BM RED", price: 3000 },
+  { name: "BOOT RUBER GN BLACK", price: 3000 },
+  { name: "BRAKE CALPER GN", price: 13000 },
+  { name: "BRAKE HARM BM 150", price: 3000 },
+  { name: "BRAKE HARM CG", price: 1200 },
+  { name: "BRAKE HARM GN", price: 1500 },
+  { name: "BRAKE HARM GUTTA", price: 3500 },
+  { name: "BRAKE MASTER RANGI GN KIOO", price: 10000 },
+  { name: "BRAKE MASTER GN", price: 7000 },
+  { name: "BRAKE MASTER KING", price: 9000 },
+  { name: "BRAKE PAD GN", price: 1000 },
+  { name: "BRAKE PANEL BM", price: 15000 },
+  { name: "BRAKE PANEL CG", price: 9000 },
+  { name: "BRAKE PANEL CG BLUE", price: 14000 },
+  { name: "BRAKE PANEL GN", price: 10000 },
+  { name: "BRAKE PANEL GN BLACK", price: 14000 },
+  { name: "BRAKE PANEL GUTA F", price: 20000 },
+  { name: "BRAKE PANEL GUTA R 250 SINO", price: 38000 },
+  { name: "BRAKE PEDAL SINO", price: 6500 },
+  { name: "BRAKE PUMP GUTTA", price: 10000 },
+  { name: "BRAKE SHOE GN", price: 2500 },
+  { name: "BRAKE SHOE GN SFQZ", price: 3500 },
+  { name: "BRAKE SHOE GUTA", price: 6500 },
+  { name: "BRAKE SHOE GUTTA ORG SINO 250", price: 11000 },
+  { name: "BRAKE SHOE TAW", price: 3500 },
+  { name: "BRAKE SWICH F", price: 500 },
+  { name: "BRAKE SWICH R", price: 600 },
+  { name: "BRASH BM 150 CRODILE", price: 3500 },
+  { name: "BRASH BM 4G", price: 3000 },
+  { name: "BRASH BMX 125", price: 3500 },
+  { name: "BRASH TOYO", price: 3000 },
+  { name: "BRASH TVS", price: 3000 },
+  { name: "BREAK MASTER GUTA", price: 10000 },
+  { name: "BREAK MASTER NEW", price: 35000 },
+  { name: "BREAK MASTER RANGI KIOO", price: 10000 },
+  { name: "BREAK MASTER SINO YAI", price: 16000 },
+  { name: "BREAK PAD KINGLION", price: 1200 },
+  { name: "BREAK PAD SINO", price: 1500 },
+  { name: "BREAK PANEL R CC200 KAWAIDA", price: 38000 },
+  { name: "BREAK SHOE SINORAY", price: 2300 },
+  { name: "BREAK SHOE XL", price: 2500 },
+  { name: "BREAK SWITCH R", price: 500 },
+  { name: "BREAKE SHOE CG", price: 2500 },
+  { name: "BREAKE SHOE TAW", price: 2800 },
+  { name: "BULB DASH BORD GN RANGI", price: 300 },
+  { name: "BULB DASH WAKA WAKA", price: 500 },
+  { name: "BULB F BOXER", price: 1500 },
+  { name: "BULB F SINO", price: 2500 },
+  { name: "BULB FENI", price: 14000 },
+  { name: "BULB INDICATOR GN", price: 150 },
+  { name: "BULB JICHO WAKA WAKA PEMBENI", price: 5000 },
+  { name: "BULB KICHUPA", price: 1300 },
+  { name: "BULB PAKING RANG", price: 400 },
+  { name: "BULB PAKING WHITE", price: 200 },
+  { name: "BULB R GN", price: 250 },
+  { name: "BULB R RANGI", price: 1500 },
+  { name: "BULB RAHISI F", price: 1200 },
+  { name: "BULB SPORT LIGHT WAKA PEMBENI BM", price: 5000 },
+  { name: "BULB ZA R RANGI", price: 2000 },
+  { name: "BUSH CHUMA TVS NYUMA", price: 3500 },
+  { name: "BUSH CLUCH CENTER", price: 3500 },
+  { name: "BUSH JEMBE YAI", price: 3000 },
+  { name: "BUSH KIUNO NO19", price: 2000 },
+  { name: "BUSH SHOKUP", price: 1000 },
+  { name: "BUSH SIDE COVER", price: 800 },
+  { name: "BUSH SPORKET BM", price: 3500 },
+  { name: "BUSH SPORKET GN", price: 1500 },
+  { name: "CLUTCH HOUSING 125", price: 9000 },
+  { name: "CLUTCH HOUSING 180 SINO", price: 20000 },
+  { name: "CLUTCH HOUSING 250 SINO", price: 28000 },
+  { name: "CLUTCH HOUSING BM", price: 35000 },
+  { name: "CLUTCH HOUSING COMP 180", price: 40000 },
+  { name: "CLUTCH HOUSING KING CBF", price: 28000 },
+  { name: "CLUTCH HOUSING KING P9", price: 20000 },
+  { name: "CLUTCH HOUSING KING SET P9", price: 40000 },
+  { name: "CLUTCH HOUSING TAW", price: 13000 },
+  { name: "CLUTCH HOUSING TVS", price: 35000 },
+  { name: "CLUTCH PLATE SFQZ", price: 4000 },
+  { name: "CLUTCH PLATE SINO GN", price: 6000 },
+  { name: "CLUTCH RELEASE 125", price: 2500 },
+  { name: "COIL KING D", price: 8500 },
+  { name: "COIL V6", price: 10000 },
+  { name: "COTAPIN KAIT", price: 2000 },
+  { name: "COVER BETTRY", price: 5500 },
+  { name: "COVER CARBURATOR", price: 5000 },
+  { name: "COVER CLUCH CDI", price: 17000 },
+  { name: "COVER CLUCH KINGLION", price: 28000 },
+  { name: "COVER CLUCH SINO", price: 45000 },
+  { name: "COVER CLUCH TOYO", price: 20000 },
+  { name: "COVER CLUTCH GUTA", price: 45000 },
+  { name: "COVER COIL KINGLION", price: 27000 },
+  { name: "COVER COIL SINO", price: 34000 },
+  { name: "COVER COIL TOYO", price: 25000 },
+  { name: "COVER EXLETA GN", price: 1000 },
+  { name: "COVER INGINE 150 BLACK", price: 80000 },
+  { name: "COVER INGINE 150 GN SILVER", price: 75000 },
+  { name: "COVER INGINE CC250", price: 70000 },
+  { name: "COVER INGINE SINO", price: 145000 },
+  { name: "COVER PEDAL BIG", price: 2000 },
+  { name: "COVER PEDAL NYAU", price: 1500 },
+  { name: "COVER POSTION", price: 1200 },
+  { name: "COVER SHOKUP PROTAPE", price: 5000 },
+  { name: "COVER SPORKET AUJIO", price: 5000 },
+  { name: "COVER SPORKET BM", price: 7000 },
+  { name: "COVER SPORKET KIDOLE GN", price: 5500 },
+  { name: "COVER SPORKET KING", price: 8000 },
+  { name: "COVER SPORKET SINO", price: 10000 },
+  { name: "COVER SPORKET TOYO", price: 10000 },
+  { name: "COVER SWICH GN", price: 1000 },
+  { name: "COVER TANG MAJI", price: 12000 },
+  { name: "COWLING BLACK BM", price: 7000 },
+  { name: "COWLING BM 150 BLACK NEW", price: 5500 },
+  { name: "COWLING BM150 RED", price: 7000 },
+  { name: "COWLING BM150 RED 5GEAR", price: 5500 },
+  { name: "COWLING HLX 150 BLUE", price: 9000 },
+  { name: "COWLING HLX BLACK 150", price: 9000 },
+  { name: "COWLING HLX RED", price: 9000 },
+  { name: "CRANK SHAFT 150 KING", price: 50000 },
+  { name: "CRANK SHAFT 150 KING P9A", price: 60000 },
+  { name: "CRANK SHAFT 150 MIX", price: 35000 },
+  { name: "CRANK SHAFT 150 TAW", price: 38000 },
+  { name: "CRANK SHAFT 150 YUAO", price: 36000 },
+  { name: "CRANK SHAFT BM 150", price: 36000 },
+  { name: "CRANK SHAFT CBF KING", price: 75000 },
+  { name: "CRANK SHAFT CC200 KAWAIDA", price: 45000 },
+  { name: "CRANK SHAFT CC200 SINO", price: 72000 },
+  { name: "CRANK SHAFT CC250 SINO", price: 72000 },
+  { name: "CRANK SHAFT KING 150", price: 50000 },
+  { name: "CRANK SHAFT SINO 180-18", price: 62000 },
+  { name: "CRANK SHAFT SINO 250", price: 70000 },
+  { name: "CRANK SHAFT SINO CC200", price: 70000 },
+  { name: "CRANK SHAFT TVS 150", price: 40000 },
+  { name: "CRANK SHAFTI 125 GN", price: 35000 },
+  { name: "CRANK SHAFTI 150 KING D", price: 35000 },
+  { name: "CRANK SHAFTI 150 KING P9", price: 55000 },
+  { name: "CRANK SHAFTI 150 NGUVU", price: 35000 },
+  { name: "CRANK SHAFTI 150 SOMON", price: 35000 },
+  { name: "CRANK SHAFTI SINO 150-6", price: 65000 },
+  { name: "CRANKSHAFT W8", price: 110000 },
+  { name: "CRANKSHAFT 125 TVS", price: 35000 },
+  { name: "CRANKSHAFT BM 150", price: 35000 },
+  { name: "CRANKSHAFT BMX 150", price: 45000 },
+  { name: "CRANKSHAFT BMX125", price: 45000 },
+  { name: "CRANKSHAFT KING P9", price: 55000 },
+  { name: "CRANKSHAFT SINO 150", price: 60000 },
+  { name: "CRANKSHAFT SOMON", price: 35000 },
+  { name: "CRANKSHAFT YUAO", price: 35000 },
+  { name: "CROSS 19-44", price: 3500 },
+  { name: "CROSS BEARING 19/44", price: 4000 },
+  { name: "CROSS BEARING 20/50", price: 4000 },
+  { name: "CROSS BEARING 20/55", price: 4000 },
+  { name: "CROSS BEARING 25-64", price: 6000 },
+  { name: "CROSS BEARING SINO 20/50", price: 5000 },
+  { name: "CROSS BEARING SINO 20/55", price: 5500 },
+  { name: "CROSS JOINT COMPLETE", price: 10000 },
+  { name: "CYLENDER HEAD GN", price: 45000 },
+  { name: "CYLINDER HEAD BLACK", price: 52000 },
+  { name: "CYLINDER HEAD BM", price: 11500 },
+  { name: "CYLINDER HEAD GUTTA CC200", price: 70000 },
+  { name: "CYLINDER HEAD GUTTA SINO", price: 100000 },
+  { name: "CYLNDER BLOCK GN 125", price: 27000 },
+  { name: "DASH BOARD BM 4G", price: 17000 },
+  { name: "DASH BOARD GUTA", price: 50000 },
+  { name: "DASH BOARD HLX G4", price: 14000 },
+  { name: "DASH BOARD KING", price: 45000 },
+  { name: "DASH BORD CG", price: 10000 },
+  { name: "DASH BORD GN", price: 12000 },
+  { name: "DASHBOARD BM 5GEAR", price: 22000 },
+  { name: "DASHBOARD CG", price: 12000 },
+  { name: "DASHBOARD COVER BM", price: 8000 },
+  { name: "DASHBOARD COVER TVS/HLX", price: 7000 },
+  { name: "EXCEL R BM", price: 3000 },
+  { name: "EXCEL R CC200 SINO GUTA", price: 38000 },
+  { name: "EXCEL R GN", price: 1700 },
+  { name: "EXCEL R GUTA 200 FUPI", price: 35000 },
+  { name: "EXCEL R GUTA 250 FUPI", price: 35000 },
+  { name: "EXCEL R PH 2", price: 1500 },
+  { name: "EXCEL R PH/MTB", price: 12000 },
+  { name: "EXCEL R XL", price: 3000 },
+  { name: "EXLETA CABLE BM", price: 1700 },
+  { name: "EXLETA CABLE CG", price: 1300 },
+  { name: "EXLETA CABLE GN", price: 1200 },
+  { name: "EXLETA CABLE GUTA NJIA 1", price: 3500 },
+  { name: "EXLETA CABLE GUTA NJIA 2", price: 3000 },
+  { name: "EXLETA CABLE RANGI", price: 5000 },
+  { name: "EXLETA CABLE SINO", price: 3500 },
+  { name: "EXLETA CABLE TVS", price: 2000 },
+  { name: "EXOST CG", price: 47000 },
+  { name: "EXOST COLA", price: 2500 },
+  { name: "EXOST KING BLACK", price: 52000 },
+  { name: "EXOST KING SILVER", price: 50000 },
+  { name: "EXOST SINO YAI BLACK", price: 60000 },
+  { name: "EXSOT GUTTA", price: 60000 },
+  { name: "EXZOST KINGLION BLACK", price: 50000 },
+  { name: "EXZOST KINGLION GN SILVER", price: 50000 },
+  { name: "FEN GUTA", price: 32000 },
+  { name: "FENI", price: 35000 },
+  { name: "FILTA BM", price: 1500 },
+  { name: "FILTA BM ORG", price: 3000 },
+  { name: "FILTA GN NDANI", price: 400 },
+  { name: "FILTA PETROL GN", price: 400 },
+  { name: "FILTA TAW BM", price: 1500 },
+  { name: "FIUZ BOX GN", price: 500 },
+  { name: "FIUZ ONLY", price: 3000 },
+  { name: "FLESHA BM", price: 1500 },
+  { name: "FLESHA NO SOUND", price: 1000 },
+  { name: "DASHBOARD GN", price: 12500 },
+  { name: "DASHBOARD GUTA", price: 45000 },
+  { name: "DASHBOARD SINO 180", price: 45000 },
+  { name: "DASHBOARD TVS", price: 45000 },
+  { name: "DASHBOARD TVS 5GEAR", price: 22000 },
+  { name: "DEREILURE SET", price: 11000 },
+  { name: "DIFF GUTA COMP CC250 SINO", price: 250000 },
+  { name: "DIFFU COMP CC200 SINO", price: 260000 },
+  { name: "DIFFU NUSU", price: 40000 },
+  { name: "DIFU", price: 85000 },
+  { name: "DISC SEWA", price: 6000 },
+  { name: "DISK COVER", price: 10000 },
+  { name: "DISK PASS MTB", price: 6000 },
+  { name: "DRAM", price: 38000 },
+  { name: "DUNGU", price: 600 },
+  { name: "ELMENT BIG BLACK", price: 16000 },
+  { name: "ELMENT BIG RED", price: 20000 },
+  { name: "ELMENT KIBAKULI", price: 27000 },
+  { name: "ELMENT SINO KAWAIDA BLACK", price: 16000 },
+  { name: "ELMENT SINO KAWAIDA RED", price: 16000 },
+  { name: "ELMENT SINO RED CHOGO", price: 20000 },
+  { name: "ELMENT SINORAY BLACK CHOGO", price: 20000 },
+  { name: "ENGLISH SPANA", price: 1000 },
+  { name: "EXCEL NYUMA SINO", price: 4000 },
+  { name: "EXCEL R YAI", price: 10000 },
+  { name: "EXCEL F BM", price: 2000 },
+  { name: "EXCEL F PH", price: 8500 },
+  { name: "EXCEL F YAI", price: 10000 },
+  { name: "EXCEL GN F", price: 1500 },
+  { name: "EXCEL GN KIUNO", price: 1700 },
+  { name: "EXCEL GUTA FUPI", price: 7000 },
+  { name: "EXCEL GUTA MBELE NDEFU", price: 8000 },
+  { name: "EXCEL GUTA NYUMA", price: 35000 },
+  { name: "EXCEL KID R", price: 15000 },
+  { name: "EXCEL KIUNO BM", price: 2000 },
+  { name: "GASKET FULL 125 BM", price: 3500 },
+  { name: "GASKET FULL 150 SINO", price: 7000 },
+  { name: "GASKET FULL 180 SINO", price: 7000 },
+  { name: "GASKET FULL 250 SIN0", price: 10000 },
+  { name: "GASKET FULL BM 150", price: 4000 },
+  { name: "GASKET FULL BMX 125", price: 3500 },
+  { name: "GASKET FULL CBF", price: 1200 },
+  { name: "GASKET FULL CC200", price: 7000 },
+  { name: "GASKET FULL CC200 SINO", price: 10000 },
+  { name: "GASKET FULL CC250", price: 7000 },
+  { name: "GASKET FULL TAW", price: 2800 },
+  { name: "GASKET FULL TVS", price: 3000 },
+  { name: "GASKET MAGNETO COIL", price: 500 },
+  { name: "GASKET MOTO 150", price: 500 },
+  { name: "GASKET MOTO BM 150", price: 500 },
+  { name: "GASKET MOTOR BLOCK 125", price: 500 },
+  { name: "GEAR BOX BM", price: 38000 },
+  { name: "GEAR BOX GN", price: 17000 },
+  { name: "GEAR BOX GUTA SINO", price: 42000 },
+  { name: "GEAR BOX KING P9", price: 35000 },
+  { name: "GEAR BOX SINO 150", price: 36000 },
+  { name: "GEAR BOX SINO 180", price: 38000 },
+  { name: "GEAR BOX TAW", price: 35000 },
+  { name: "GEAR CHUMA", price: 3500 },
+  { name: "GEAR LIVER BM", price: 3500 },
+  { name: "GEAR LIVER BOLT13", price: 1500 },
+  { name: "GEAR LIVER CG", price: 2500 },
+  { name: "GEAR LIVER GN PANDE1", price: 1500 },
+  { name: "GEAR LIVER GN PANDE2", price: 3500 },
+  { name: "GEAR LIVER GUTA", price: 5000 },
+  { name: "GEAR LIVER KING", price: 9000 },
+  { name: "GEAR LIVER SET MTB", price: 30000 },
+  { name: "GEAR LIVER SINO GN", price: 3000 },
+  { name: "GEAR LIVER SINO GUTTA", price: 8000 },
+  { name: "GEAR PLASTIC", price: 3500 }
 ];
 
 function renderProductsPage() {
@@ -1456,24 +1934,70 @@ function avgBuyPrice(itemId) {
   return totalQty > 0 ? totalCost / totalQty : null;
 }
 
-function renderSalesPage() {
+function startNewSale() {
+  UI.saleForm = { date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
+  rerender();
+}
+function setSaleField(field, value) {
+  if (!UI.saleForm) startNewSale();
+  UI.saleForm[field] = value;
+  rerender();
+}
+function setSaleRow(rowId, field, value) {
   const f = UI.saleForm;
-  const recent = [...STATE.sales].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 15);
+  f.rows = f.rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r));
+  if (field === "itemName") {
+    const prod = STATE.products.find((p) => p.name.toLowerCase() === value.trim().toLowerCase());
+    const row = f.rows.find((r) => r.id === rowId);
+    if (prod && !row.price) row.price = String(prod.price);
+  }
+  rerender();
+}
+function addSaleRow() {
+  UI.saleForm.rows.push({ id: uid(), itemName: "", price: "", qty: "" });
+  rerender();
+}
+function removeSaleRow(rowId) {
+  UI.saleForm.rows = UI.saleForm.rows.filter((r) => r.id !== rowId);
+  rerender();
+}
+
+function renderSalesPage() {
+  if (!UI.saleForm) UI.saleForm = { date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
+  const f = UI.saleForm;
+  const grandTotal = f.rows.reduce((s, r) => s + (Number(r.price) || 0) * (Number(r.qty) || 0), 0);
+  const recent = [...STATE.sales].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 20);
 
   return `
   <div class="panel">
     <h3>➕ Record a Sale</h3>
-    <select id="sl-item" class="field" onchange="setSaleField('itemId',this.value)">
-      <option value="">— Select item from stock —</option>
-      ${STATE.stockItems.map((it) => `<option value="${it.id}" ${f && f.itemId === it.id ? "selected" : ""}>${esc(it.name)} (${qtyOf(it.id)} in stock)</option>`).join("")}
-    </select>
-    <input id="sl-price" class="field" type="text" inputmode="decimal" placeholder="Selling price (per unit)" value="${f ? esc(f.price) : ""}" oninput="this.value=sanitizeNum(this.value);setSaleField('price',this.value)">
-    <input id="sl-qty" class="field" type="text" inputmode="numeric" placeholder="Quantity sold" value="${f ? esc(f.qty) : ""}" oninput="this.value=sanitizeNum(this.value);setSaleField('qty',this.value)">
     <label class="due-label">📅 Date of sale</label>
-    <input id="sl-date" class="field" type="date" value="${f ? esc(f.date) : todayStr()}" oninput="setSaleField('date',this.value)">
-    ${f && f.itemId && f.price && f.qty ? `<div class="grand-total-row"><span>Total</span><span>${fmt(Number(f.price) * Number(f.qty))}</span></div>` : ""}
+    <input id="sl-date" class="field" type="date" value="${esc(f.date)}" oninput="setSaleField('date',this.value)">
+    <div class="items-block" style="margin-top:10px">
+      <div class="item-row item-row-head" style="grid-template-columns:1.4fr .9fr .6fr .9fr auto">
+        <span>Item</span><span>Price</span><span>Qty</span><span>Total</span><span></span>
+      </div>
+      ${f.rows.map((r) => {
+        const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase());
+        const available = stockItem ? qtyOf(stockItem.id) : null;
+        const lineTotal = (Number(r.price) || 0) * (Number(r.qty) || 0);
+        return `
+        <div class="item-row" style="grid-template-columns:1.4fr .9fr .6fr .9fr auto">
+          <input list="product-datalist" id="slr-name-${r.id}" class="field field-sm" placeholder="Type item name" value="${esc(r.itemName)}" oninput="setSaleRow('${r.id}','itemName',this.value)">
+          <input id="slr-price-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setSaleRow('${r.id}','price',this.value)">
+          <input id="slr-qty-${r.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setSaleRow('${r.id}','qty',this.value)">
+          <span class="item-line-total">${fmt(lineTotal)}</span>
+          ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeSaleRow('${r.id}')">🗑️</button>` : `<span></span>`}
+        </div>
+        ${r.itemName.trim() ? `<div style="font-size:10.5px;color:${available == null ? "#dc2636" : "#8290a4"};margin:-4px 0 6px 2px">
+          ${available == null ? "⚠️ Not found in Main Store stock" : `${available} currently in stock`}
+        </div>` : ""}`;
+      }).join("")}
+      <button class="add-row-btn" onclick="addSaleRow()">＋ Add Item</button>
+      <div class="grand-total-row"><span>Grand Total</span><span>${fmt(grandTotal)}</span></div>
+    </div>
     ${UI.saleMsg ? `<p class="settings-msg ${UI.saleMsg.ok ? "ok" : "err"}">${esc(UI.saleMsg.text)}</p>` : ""}
-    <button class="btn btn-primary" onclick="submitSale()">Record Sale</button>
+    <button class="btn btn-primary" style="margin-top:10px" onclick="submitSale()">Record Sale</button>
   </div>
 
   <div class="panel" style="margin-top:16px">
@@ -1486,47 +2010,52 @@ function renderSalesPage() {
           <td>${s.qty} × ${fmt(s.sellPrice)}</td>
           <td class="rt-amount">${fmt(s.total)}</td>
           <td class="rt-date">${s.date}</td>
+          <td><button class="icon-btn" onclick="deleteSale('${s.id}')">🗑️</button></td>
         </tr>`).join("")}
     </tbody></table>`}
   </div>`;
 }
-function setSaleField(field, value) {
-  if (!UI.saleForm) UI.saleForm = { itemId: "", price: "", qty: "", date: todayStr() };
-  UI.saleForm[field] = value;
-  if (field === "itemId") {
-    const item = STATE.stockItems.find((it) => it.id === value);
-    if (item) {
-      const prod = STATE.products.find((p) => p.name.toLowerCase() === item.name.toLowerCase());
-      if (prod && !UI.saleForm.price) UI.saleForm.price = String(prod.price);
-    }
-  }
-  rerender();
-}
 function submitSale() {
   const f = UI.saleForm;
   UI.saleMsg = null;
-  if (!f || !f.itemId) { UI.saleMsg = { ok: false, text: "Select an item." }; return rerender(); }
-  const qty = Number(f.qty);
-  const price = Number(f.price);
-  if (!qty || qty <= 0) { UI.saleMsg = { ok: false, text: "Enter a valid quantity." }; return rerender(); }
-  if (!price || price <= 0) { UI.saleMsg = { ok: false, text: "Enter a valid selling price." }; return rerender(); }
-  const item = STATE.stockItems.find((it) => it.id === f.itemId);
-  const available = qtyOf(f.itemId);
-  if (qty > available) { UI.saleMsg = { ok: false, text: `Only ${available} in stock.` }; return rerender(); }
+  const validRows = f.rows.filter((r) => r.itemName.trim() && Number(r.price) > 0 && Number(r.qty) > 0);
+  if (validRows.length === 0) { UI.saleMsg = { ok: false, text: "Add at least one item with a price and quantity." }; return rerender(); }
 
-  const buyPrice = avgBuyPrice(f.itemId);
-  const sale = {
-    id: uid(), itemId: f.itemId, itemName: item.name, sellPrice: price, qty,
-    total: price * qty, buyPrice, date: f.date || todayStr(),
-  };
-  STATE.sales.push(sale);
+  for (const r of validRows) {
+    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase());
+    if (!stockItem) { UI.saleMsg = { ok: false, text: `"${r.itemName}" was not found in Main Store stock.` }; return rerender(); }
+    const available = qtyOf(stockItem.id);
+    if (Number(r.qty) > available) { UI.saleMsg = { ok: false, text: `Only ${available} of "${r.itemName}" in stock.` }; return rerender(); }
+  }
+
+  validRows.forEach((r) => {
+    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase());
+    const qty = Number(r.qty);
+    const price = Number(r.price);
+    const buyPrice = avgBuyPrice(stockItem.id);
+    const movementId = uid();
+    STATE.stockMovements.push({ id: movementId, itemId: stockItem.id, type: "out", qty, destination: "Sale", date: f.date });
+    STATE.sales.push({
+      id: uid(), itemId: stockItem.id, itemName: stockItem.name, sellPrice: price, qty,
+      total: price * qty, buyPrice, date: f.date || todayStr(), movementId,
+    });
+  });
+  saveStockMovements();
   saveSales();
 
-  STATE.stockMovements.push({ id: uid(), itemId: f.itemId, type: "out", qty, destination: "Sale", date: sale.date });
-  saveStockMovements();
-
   UI.saleForm = null;
-  UI.saleMsg = { ok: true, text: "Sale recorded." };
+  UI.saleMsg = { ok: true, text: `${validRows.length} sale(s) recorded.` };
+  rerender();
+}
+function deleteSale(id) {
+  if (!confirm("Delete this sale? This will also put the stock back.")) return;
+  const sale = STATE.sales.find((s) => s.id === id);
+  if (sale && sale.movementId) {
+    STATE.stockMovements = STATE.stockMovements.filter((m) => m.id !== sale.movementId);
+    saveStockMovements();
+  }
+  STATE.sales = STATE.sales.filter((s) => s.id !== id);
+  saveSales();
   rerender();
 }
 
@@ -1631,6 +2160,17 @@ function renderSettings() {
   const notifStatus = ("Notification" in window) ? Notification.permission : "unsupported";
   return `
   <div class="panel settings-panel">
+    <h3>🖼️ Company Logo</h3>
+    <p style="font-size:12px;color:#6b7280">Upload your own logo to replace the default one on screens and receipts.</p>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+      ${STATE.settings.logoBase64 ? `<img src="${STATE.settings.logoBase64}" style="width:52px;height:52px;object-fit:contain;border-radius:8px;border:1px solid var(--line)">` : logoSvg(52)}
+      <input id="logo-upload" type="file" accept="image/*" class="field field-sm" onchange="handleLogoUpload(this)">
+    </div>
+    ${STATE.settings.logoBase64 ? `<button class="btn btn-ghost btn-sm" onclick="removeLogo()">Remove uploaded logo</button>` : ""}
+    ${UI.logoMsg ? `<p class="settings-msg ${UI.logoMsg.ok ? "ok" : "err"}">${esc(UI.logoMsg.text)}</p>` : ""}
+  </div>
+
+  <div class="panel settings-panel" style="margin-top:16px">
     <h3>🔒 App Password</h3>
     <p style="font-size:12px;color:#6b7280">This is the password anyone needs to open this system.</p>
     <input id="ap-current" class="field" type="password" placeholder="Current app password">
@@ -2083,18 +2623,65 @@ function renderMainStorePage() {
     <h3>Recent Stock Movements</h3>
     ${STATE.stockMovements.length === 0 ? `<p class="empty-note">No movements yet.</p>` : `
     <table class="recent-table"><tbody>
-      ${[...STATE.stockMovements].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 12).map((m) => {
+      ${[...STATE.stockMovements].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 20).map((m) => {
         const item = STATE.stockItems.find((it) => it.id === m.itemId);
+        const isEditing = UI.editingMovementId === m.id;
+        if (isEditing) {
+          return `<tr><td colspan="5">
+            <div class="entry-form" style="margin:6px 0">
+              <input id="em-qty-${m.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${m.qty}" oninput="this.value=sanitizeNum(this.value)">
+              ${m.type === "in" ? `
+                <input id="em-supplier-${m.id}" class="field field-sm" placeholder="From (supplier)" value="${esc(m.supplier || "")}">
+                <input id="em-price-${m.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${m.price != null ? m.price : ""}" oninput="this.value=sanitizeNum(this.value)">
+              ` : `
+                <input id="em-dest-${m.id}" class="field field-sm" placeholder="Going to" value="${esc(m.destination || "")}">
+              `}
+              <input id="em-date-${m.id}" class="field field-sm" type="date" value="${m.date}">
+              <div class="form-actions">
+                <button class="btn btn-ghost btn-sm" onclick="UI.editingMovementId=null;rerender();">Cancel</button>
+                <button class="btn btn-primary btn-sm" onclick="saveMovementEdit('${m.id}')">Save</button>
+              </div>
+            </div>
+          </td></tr>`;
+        }
         return `<tr>
           <td>${item ? esc(item.name) : "—"}</td>
           <td><span class="badge ${m.type === "in" ? "paid" : "pending"}">${m.type === "in" ? "Received" : "Dispatched"}</span></td>
           <td class="rt-amount">${m.qty}</td>
           <td>${m.type === "in" ? esc(m.supplier || "") : esc(m.destination || "")}</td>
           <td class="rt-date">${m.date}</td>
+          <td style="white-space:nowrap">
+            <button class="icon-btn" style="color:#1677ff" onclick="UI.editingMovementId='${m.id}';rerender();">✏️</button>
+            <button class="icon-btn" onclick="deleteMovement('${m.id}')">🗑️</button>
+          </td>
         </tr>`;
       }).join("")}
     </tbody></table>`}
   </div>`;
+}
+function saveMovementEdit(id) {
+  const m = STATE.stockMovements.find((x) => x.id === id);
+  if (!m) return;
+  const qty = Number(document.getElementById("em-qty-" + id).value) || m.qty;
+  const date = document.getElementById("em-date-" + id).value || m.date;
+  const updated = { ...m, qty, date };
+  if (m.type === "in") {
+    updated.supplier = document.getElementById("em-supplier-" + id).value.trim();
+    const priceVal = document.getElementById("em-price-" + id).value;
+    updated.price = priceVal ? Number(priceVal) : null;
+  } else {
+    updated.destination = document.getElementById("em-dest-" + id).value.trim();
+  }
+  STATE.stockMovements = STATE.stockMovements.map((x) => (x.id === id ? updated : x));
+  saveStockMovements();
+  UI.editingMovementId = null;
+  rerender();
+}
+function deleteMovement(id) {
+  if (!confirm("Delete this record? Stock quantity will be recalculated.")) return;
+  STATE.stockMovements = STATE.stockMovements.filter((m) => m.id !== id);
+  saveStockMovements();
+  rerender();
 }
 
 function startReceiveStock() {
@@ -2197,7 +2784,7 @@ function renderDeliveryNoteModal() {
     <div class="modal-stack" style="max-width:520px">
       <div class="receipt-print">
         <div style="text-align:center;margin-bottom:14px">
-          <div style="display:flex;justify-content:center;margin-bottom:6px">${logoSvg(48)}</div>
+          <div style="display:flex;justify-content:center;margin-bottom:6px">${companyLogo(48)}</div>
           <h2 style="margin:0">E.E.MSANGO COMPANY LIMITED</h2>
           <p style="font-size:11.5px;color:#6b7280;margin-top:4px">TIN NO: 118-065-771 &nbsp;·&nbsp; P.O. Box, Arusha</p>
           <p style="font-size:13px;font-weight:700;margin-top:8px;text-decoration:underline">DELIVERY NOTE</p>
@@ -2255,7 +2842,7 @@ function renderReceiptModal() {
   <div class="modal-overlay">
     <div class="modal-stack">
       <div class="receipt-print">
-        <h2 class="receipt-title">${logoSvg(30)} Receipt</h2>
+        <h2 class="receipt-title" style="display:flex;align-items:center;gap:8px;justify-content:center">${companyLogo(30)} Receipt</h2>
         <div class="receipt-meta">
           <div><strong>${esc(entry.name)}</strong>${entry.phone ? " · " + esc(entry.phone) : ""}</div>
           <div>Date: ${entry.dateCreated}</div>
