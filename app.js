@@ -29,7 +29,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
+let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
 let UI = {
@@ -54,6 +54,14 @@ let UI = {
   dispatchForm: null,
   deliveryNoteId: null,
   editingLimitId: null,
+  editingProductId: null,
+  showProductTrash: false,
+  showSalesReport: false,
+  salesReportUnlocked: false,
+  saleForm: null,
+  saleMsg: null,
+  plFrom: "",
+  plTo: "",
 };
 let notifiedKeys = new Set();
 let charts = {};
@@ -83,6 +91,21 @@ function uid() { return "id-" + Math.random().toString(36).slice(2) + Date.now()
 function sanitizeNum(v) { return v.replace(/[^0-9.]/g, ""); }
 function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
+function logoSvg(size) {
+  return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="eelogo" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#1677ff"/>
+        <stop offset="100%" stop-color="#0b1b30"/>
+      </linearGradient>
+    </defs>
+    <path d="M50 4 L59 14 L73 12 L76 26 L90 31 L86 45 L96 55 L86 65 L90 79 L76 84 L73 98 L59 96 L50 106 L41 96 L27 98 L24 84 L10 79 L14 65 L4 55 L14 45 L10 31 L24 26 L27 12 L41 14 Z"
+      transform="scale(0.9) translate(5,-3)" fill="url(#eelogo)"/>
+    <circle cx="50" cy="50" r="33" fill="#0d2038"/>
+    <text x="50" y="59" font-family="Georgia, serif" font-size="30" font-weight="700" fill="#fff" text-anchor="middle">EE</text>
+  </svg>`;
+}
+
 function loadState() {
   if (!CONFIG_IS_SET) return;
   // Sign in anonymously in the background — invisible to the user — purely so
@@ -103,6 +126,7 @@ function loadState() {
         STATE.products = data.products || [];
         STATE.stockItems = data.stockItems || [];
         STATE.stockMovements = data.stockMovements || [];
+        STATE.sales = data.sales || [];
         STATE.settings = data.settings || { appPassword: null, reportsPassword: "eric1234" };
         const wasLoaded = STATE_LOADED;
         STATE_LOADED = true;
@@ -121,6 +145,7 @@ function saveEntries() { if (docRef) docRef.set({ entries: STATE.entries }, { me
 function saveProducts() { if (docRef) docRef.set({ products: STATE.products }, { merge: true }); }
 function saveStockItems() { if (docRef) docRef.set({ stockItems: STATE.stockItems }, { merge: true }); }
 function saveStockMovements() { if (docRef) docRef.set({ stockMovements: STATE.stockMovements }, { merge: true }); }
+function saveSales() { if (docRef) docRef.set({ sales: STATE.sales }, { merge: true }); }
 function saveSettings() { if (docRef) docRef.set({ settings: STATE.settings }, { merge: true }); }
 
 /* ---------- render with focus preservation ---------- */
@@ -192,7 +217,7 @@ function renderLogin(mode) {
   return `
   <div class="login-wrap">
     <div class="login-card">
-      <div class="login-mark">EE</div>
+      <div class="login-mark">${logoSvg(52)}</div>
       <h1>E.E.MSANGO COMPANY LIMITED</h1>
       <p class="login-sub">${mode === "setup" ? "Set the password that will protect your system" : "Enter the password to continue"}</p>
       <input id="login-password" class="field" type="password" placeholder="Password" onkeydown="if(event.key==='Enter'){${mode === "setup" ? "handleSetup();" : "handleLogin();"}}">
@@ -244,6 +269,7 @@ function renderShell() {
     alerts: ["Alerts", "Everything due today or overdue"],
     products: ["Products", "Items you sell, for faster order entry"],
     mainstore: ["Main Store", "Stock received and dispatched"],
+    sales: ["Sales", "Record what you sold today"],
     settings: ["Settings", "Manage your passwords"],
   };
   const [title, sub] = titles[UI.page] || titles.dashboard;
@@ -254,6 +280,7 @@ function renderShell() {
     ["owe", "💼", "Creditors"],
     ["products", "📦", "Products"],
     ["mainstore", "🏬", "Main Store"],
+    ["sales", "💰", "Sales"],
     ["reports", "📊", "Reports"],
     ["alerts", "🔔", "Alerts"],
     ["settings", "⚙️", "Settings"],
@@ -263,7 +290,7 @@ function renderShell() {
   <div class="shell">
     <aside class="sidebar">
       <div class="logo">
-        <div class="logo-mark">EE</div>
+        <div class="logo-mark">${logoSvg(38)}</div>
         <div><h2>E.E.MSANGO CO. LTD</h2><small>Manage • Track • Grow</small></div>
       </div>
       <ul class="menu">
@@ -315,6 +342,7 @@ function renderPage(page) {
   if (page === "alerts") return renderAlerts();
   if (page === "products") return renderProductsPage();
   if (page === "mainstore") return renderMainStorePage();
+  if (page === "sales") return renderSalesPage();
   if (page === "owed") return guardFinancials(() => renderColumnPage("owed_to_me"));
   if (page === "owe") return guardFinancials(() => renderColumnPage("i_owe"));
   if (page === "settings") return renderSettings();
@@ -345,32 +373,518 @@ function unlockFinancials() {
 }
 
 /* ---------- PRODUCTS ---------- */
+const BULK_PRODUCTS = [
+  { name: "SWICH FUNGUO RGM", price: 4000 },
+  { name: "SWICH FUNGUO TVS", price: 7000 },
+  { name: "SWITCH FUNGUO BM", price: 6000 },
+  { name: "SWITCH FUNGUO GN", price: 3500 },
+  { name: "SWITCH FUNGUO KING", price: 5000 },
+  { name: "SWITCH FUNGUO RGM", price: 4000 },
+  { name: "SWITCH FUNGUO SINO 250", price: 6000 },
+  { name: "SWITCH FUNGUO SINO GN", price: 6000 },
+  { name: "SWITCH FUNGUO SINO YAI", price: 10000 },
+  { name: "SWITCH FUNGUO TOP RICH", price: 4000 },
+  { name: "SWITCH FUNGUO TVS", price: 6000 },
+  { name: "SWITCH KUSHOTO OLD", price: 6000 },
+  { name: "T YA CHINI GUTA", price: 38000 },
+  { name: "TAA KAPORI SINO R", price: 13000 },
+  { name: "TAA KUCHAJI", price: 8500 },
+  { name: "TAA MTB BETTRY R/F", price: 7500 },
+  { name: "TAA SEWA", price: 4500 },
+  { name: "TAA YA GUTA FKN/KING", price: 8000 },
+  { name: "TAA ZA KUCHAJI", price: 9000 },
+  { name: "TAA ZA KUCHAJI/HORN", price: 9000 },
+  { name: "TAIL LAMP BM", price: 6000 },
+  { name: "TAIL LAMP CG", price: 8000 },
+  { name: "TAIL LAMP GLASS AUJIO", price: 3000 },
+  { name: "TAIL LAMP GLASS GN", price: 2000 },
+  { name: "TAIL LAMP GLASS XL", price: 2000 },
+  { name: "TAIL LAMP GN", price: 10000 },
+  { name: "TAIL LAMP GUTA FUPI", price: 5500 },
+  { name: "TAIL LAMP GUTA KINGLION", price: 8500 },
+  { name: "TAIL LAMP GUTA SINO BIG", price: 6000 },
+  { name: "TAIL LAMP GUTA SINO NDOGO", price: 6000 },
+  { name: "TAIL LAMP HLX", price: 4500 },
+  { name: "TAIL LAMP LENS BM", price: 1800 },
+  { name: "TAIL LAMP R SIMBA", price: 15000 },
+  { name: "TAIL LAMP XL", price: 4500 },
+  { name: "TAIL LAMP XL UREMBO", price: 10000 },
+  { name: "TAILAMP AUJIO KAWAIDA", price: 12000 },
+  { name: "TAILAMP AUJIO SINO", price: 15000 },
+  { name: "TAILAMP GLASS HLX", price: 2000 },
+  { name: "TAILAMP YANGA", price: 14000 },
+  { name: "TAMBI PANCHA", price: 5500 },
+  { name: "TANG BLACK BM OLD", price: 70000 },
+  { name: "TANG BLACK SINO", price: 67000 },
+  { name: "TANG BMX 125", price: 70000 },
+  { name: "TANG BOXER BLACK", price: 70000 },
+  { name: "TANG BOXER BLACK RED", price: 70000 },
+  { name: "TANG CG", price: 45000 },
+  { name: "TANG FLOWER BLACK", price: 65000 },
+  { name: "TANG FLOWER RED", price: 65000 },
+  { name: "TANG GUTA SINO", price: 90000 },
+  { name: "TANG KING YAI RED", price: 80000 },
+  { name: "TANG RED SINO", price: 67000 },
+  { name: "TANG SIMBA BLACK", price: 65000 },
+  { name: "TANG SIMBA RED", price: 65000 },
+  { name: "TANG SINO", price: 67000 },
+  { name: "TANG SINO MAYAI BLACK", price: 77000 },
+  { name: "TANG SINO MAYAI RED", price: 77000 },
+  { name: "TANG SINORAY", price: 65000 },
+  { name: "TANK MAFUTA GUTA", price: 35000 },
+  { name: "TAPET LOW BM", price: 10000 },
+  { name: "TAPET LOW BMX125", price: 12000 },
+  { name: "TAPET LOW GN", price: 3500 },
+  { name: "TAPET LOW KINGLION", price: 6000 },
+  { name: "TAPET LOW SINO", price: 6000 },
+  { name: "TAPET LOW SINO YAI", price: 12000 },
+  { name: "TAPET LOW TAW", price: 4000 },
+  { name: "TAPET LOW YUAO", price: 4000 },
+  { name: "TAPET SINO YAI", price: 12000 },
+  { name: "TAPET TIMING CHAIN 180 SINO", price: 12000 },
+  { name: "TAPET UP 150 GN", price: 6000 },
+  { name: "TAPET UP GUTTA", price: 12000 },
+  { name: "TYRE 110/16 KINGLION", price: 53000 },
+  { name: "TYRE 110/16 MITCHEL", price: 46000 },
+  { name: "TYRE 110/16 SINORAY", price: 55000 },
+  { name: "TYRE 110/16 TOP", price: 56000 },
+  { name: "TYRE 110/17 CC", price: 48000 },
+  { name: "TYRE 110/17 D.LIFE", price: 52000 },
+  { name: "TYRE 110/17 KINGLION", price: 53000 },
+  { name: "TYRE 110/17 SINORAY KASHATA", price: 60000 },
+  { name: "TYRE 110/16 SINO TOLEO", price: 55000 },
+  { name: "TYRE 110/17 SINO TOLEO", price: 55000 },
+  { name: "TYRE 110-16 OLAWE", price: 42000 },
+  { name: "TYRE 110X16 SANMOTO", price: 58000 },
+  { name: "TYRE 275/17 D.LIFE", price: 36000 },
+  { name: "TYRE 275/17 TUBELESS SINO", price: 40000 },
+  { name: "TYRE 275/18 CC TUBELESS", price: 36000 },
+  { name: "TYRE 275/18 D.LIFE KASHATA", price: 36000 },
+  { name: "TYRE 275/18 D.LIFE TOLEO", price: 36000 },
+  { name: "TYRE 275/18 DOUBLE LIFE", price: 36000 },
+  { name: "TYRE 275/18 SANMOTO", price: 38000 },
+  { name: "TYRE 275/18 SINO", price: 36000 },
+  { name: "TYRE 275/18 TUBE", price: 30000 },
+  { name: "TYRE 275/18 CC TOLEO", price: 36000 },
+  { name: "TYRE 300/17 DOUBLE LIFE", price: 36000 },
+  { name: "TYRE 300/17 KING", price: 43000 },
+  { name: "TYRE 300/17 TUBELESS CC", price: 36000 },
+  { name: "TYRE 300/18 LE", price: 35000 },
+  { name: "TYRE 300/17 KINGLION F", price: 42000 },
+  { name: "TYRE 300-18 CC KASHATA TUBELESS", price: 36000 },
+  { name: "TYRE 350/18", price: 54000 },
+  { name: "TYRE 410/18", price: 50000 },
+  { name: "TYRE 500/12 SINO", price: 95000 },
+  { name: "TYRE BM 100/17 HAIROD", price: 52000 },
+  { name: "TYRE DIAMOND PH", price: 9000 },
+  { name: "TYRE F FARASI", price: 30000 },
+  { name: "TYRE GUTA RAHISI", price: 75000 },
+  { name: "TYRE HARTEX PH", price: 15000 },
+  { name: "TYRE KING 500/12", price: 60000 },
+  { name: "TYRE KINGSTONE 110/16", price: 60000 },
+  { name: "TYRE KINGSTONE 275/18", price: 40000 },
+  { name: "TYRE MTB HARTEX 26", price: 13000 },
+  { name: "TYRE MTB METRO PANA", price: 15000 },
+  { name: "TYRE MTB RALSON 26", price: 13500 },
+  { name: "TYRE MTB SZ24", price: 10000 },
+  { name: "TYRE MTB SZ26 MTB RAHISI", price: 11000 },
+  { name: "TYRE R FARASI", price: 40000 },
+  { name: "TYRE RALSON SZ20", price: 9000 },
+  { name: "TYRE SINORAY F", price: 33000 },
+  { name: "TYRE SIZE 14", price: 6500 },
+  { name: "TYRE SONLNK GUTA", price: 88000 },
+  { name: "TYRE SZ12", price: 6500 },
+  { name: "TYRE SZ14", price: 9000 },
+  { name: "TYRE SZ16", price: 8500 },
+  { name: "TYRE SZ18", price: 8000 },
+  { name: "TYRE SZ18 MTB", price: 7500 },
+  { name: "TYRE SZ20", price: 9000 },
+  { name: "TYRE SZ22", price: 8000 },
+  { name: "TYRE SZ24 SPORT", price: 10000 },
+  { name: "TYRE SZ26 SPORT HARTEX", price: 10000 },
+  { name: "TYRE SZ27 SPORT", price: 10000 },
+  { name: "TYRE SZ27 SPORT KON", price: 10000 },
+  { name: "TYRE SZ28 HARTEX SPORT", price: 13000 },
+  { name: "TYRE TOPRICH KASHATA R", price: 75000 },
+  { name: "U BOLT", price: 500 },
+  { name: "U BOLT GUTA", price: 5000 },
+  { name: "ULANGA MACHO 12", price: 8000 },
+  { name: "UMA AVON", price: 12500 },
+  { name: "UMA MTB CHUCHU", price: 7500 },
+  { name: "UMA NEELAM PH", price: 9500 },
+  { name: "UMA PH ACL", price: 10000 },
+  { name: "VALVE SEAL GN", price: 300 },
+  { name: "VALVE SEAL TVS", price: 1000 },
+  { name: "VALVU KEY SPAANA", price: 700 },
+  { name: "VIBATI KINGLION", price: 1500 },
+  { name: "VIBATI KINGLION COMP", price: 4000 },
+  { name: "VIBATI MADGUD SINO", price: 2000 },
+  { name: "VIBATI SHOKUP", price: 3000 },
+  { name: "VIBATI SHOKUP SKGO", price: 2000 },
+  { name: "VIBATI SINO NEW", price: 2000 },
+  { name: "VIBATI TOYO", price: 1000 },
+  { name: "VIGOZ PAMP", price: 2000 },
+  { name: "VIN TAPE DENKA", price: 750 },
+  { name: "VIN TAPE RAHISI", price: 600 },
+  { name: "VIRAKA BIG", price: 2500 },
+  { name: "VIRAKA KATI", price: 2000 },
+  { name: "VIRUNGU INDICATOR", price: 10000 },
+  { name: "VIRUNGU STERLING", price: 6500 },
+  { name: "VISOR BM", price: 2000 },
+  { name: "VISOR HLX", price: 5000 },
+  { name: "WAKA WAKA POLICE MACHO 2", price: 2000 },
+  { name: "WAKA WAKA POLICE MACHO 4", price: 3000 },
+  { name: "WAKAWAKA SIMBA", price: 3000 },
+  { name: "WAKAWAKA YANGA", price: 3000 },
+  { name: "WATER PUMP", price: 6000 },
+  { name: "WATER PUMP COMP SINO", price: 20000 },
+  { name: "WATER PUMP GUTA KAWAIDA", price: 12000 },
+  { name: "WIRE LOCK BIG", price: 5000 },
+  { name: "WIRE PLUG", price: 1200 },
+  { name: "WIRE RING BM", price: 10000 },
+  { name: "WIRELOCK NO", price: 4000 },
+  { name: "WIRELOCK STAR", price: 4000 },
+  { name: "WIRERING", price: 22000 },
+  { name: "WIRERING BM", price: 10000 },
+  { name: "WIRERING GN TAW", price: 12000 },
+  { name: "WIRERING GN YUAO", price: 10000 },
+  { name: "UMA SZ 20", price: 5500 },
+  { name: "UNYAYO BULLDOG", price: 4000 },
+  { name: "UREMBO MACHO", price: 5000 },
+  { name: "UREMBO SPOKU RANGI", price: 7000 },
+  { name: "UZI MOTA BM", price: 300 },
+  { name: "UZI MOTO GUTA", price: 1500 },
+  { name: "UZI MOTO MNENE", price: 300 },
+  { name: "VALI NALI", price: 1000 },
+  { name: "VALI SPECIAL", price: 250 },
+  { name: "VALVE INGINE TVS", price: 3500 },
+  { name: "VALVE ENGINE BM", price: 2000 },
+  { name: "VALVE GARD BM", price: 2000 },
+  { name: "VALVE GARD GN", price: 2000 },
+  { name: "VALVE GUIDE BM", price: 2500 },
+  { name: "VALVE GUIDE TVS 150", price: 2000 },
+  { name: "VALVE INGINE 180 SINO", price: 8000 },
+  { name: "VALVE INGINE 200 SINO", price: 10000 },
+  { name: "VALVE INGINE BM 150", price: 3500 },
+  { name: "VALVE INGINE BMX 125", price: 3500 },
+  { name: "VALVE INGINE CBF", price: 6000 },
+  { name: "VALVE INGINE CC200 KICHWA REFU", price: 4000 },
+  { name: "VALVE INGINE KINGLION", price: 5000 },
+  { name: "VALVE INGINE SINO 150", price: 7500 },
+  { name: "VALVE INGINE SINO CC250", price: 11000 },
+  { name: "VALVE INGNINE 125 BMX", price: 3500 },
+  { name: "VALVE INGNINE 125 GN", price: 2000 },
+  { name: "VALVE INGNINE 150 YUAO", price: 2000 },
+  { name: "VALVE INGNINE GUTA CC200", price: 4000 },
+  { name: "VALVE INGNINE GUTA CC250", price: 4000 },
+  { name: "VALVE INGNINE KINGLION 150", price: 7000 },
+  { name: "VALVE INGNINE KINGLION T/CHAIN", price: 12000 },
+  { name: "VALVE INGNINE LDY GN", price: 2000 },
+  { name: "VALVE INGNINE SINO CC200", price: 10000 },
+  { name: "VALVE MPIRA", price: 3000 },
+  { name: "VALVE SEAL BM", price: 500 },
+  { name: "SAPRESA PLUG", price: 500 },
+  { name: "SEAL 32-44", price: 500 },
+  { name: "SEAL 14-28", price: 500 },
+  { name: "SEAL 16-28", price: 500 },
+  { name: "SEAL 20-34", price: 500 },
+  { name: "SEAL 20-35", price: 500 },
+  { name: "SEAL 25-52", price: 4500 },
+  { name: "SEAL 27-37 CG", price: 1200 },
+  { name: "SEAL 27-38", price: 1500 },
+  { name: "SEAL 27-52", price: 3000 },
+  { name: "SEAL 29-38", price: 1500 },
+  { name: "SEAL 30-40", price: 750 },
+  { name: "SEAL 30-42", price: 750 },
+  { name: "SEAL 31-43", price: 500 },
+  { name: "SEAL 32/43", price: 500 },
+  { name: "SEAL 42-55", price: 3000 },
+  { name: "SEAL 50-63", price: 3000 },
+  { name: "SEAL 55-75", price: 3000 },
+  { name: "SEAL BM PC", price: 600 },
+  { name: "SEAL GEAR LIVER BM", price: 500 },
+  { name: "SEAL GUTA 30-47", price: 2500 },
+  { name: "SEAL GUTA MIX", price: 1500 },
+  { name: "SEAL KIOO GN", price: 1000 },
+  { name: "SEAL KIT GN", price: 1500 },
+  { name: "SEAL KITI BM", price: 1500 },
+  { name: "SEAL MIGUU SINO", price: 4500 },
+  { name: "SEAL SHOKUP 31/43 PAIR", price: 1000 },
+  { name: "SEAL SHOKUP BM", price: 500 },
+  { name: "SEAL SHOKUP CG", price: 600 },
+  { name: "SEAL SHOKUP GUTA SINO", price: 4500 },
+  { name: "SEAL SHOKUP TVS", price: 600 },
+  { name: "SEAL WATER PUMP", price: 5000 },
+  { name: "SEAT BM", price: 30000 },
+  { name: "SEAT CG", price: 40000 },
+  { name: "SEAT COVER BALL", price: 4000 },
+  { name: "SPEED METER CABLE TVS", price: 2000 },
+  { name: "SPEED MITA CABLE BM", price: 1700 },
+  { name: "SPEED MITA CABLE GN", price: 1300 },
+  { name: "SPEED MITA CABLE GUTA", price: 3500 },
+  { name: "SPOCKET COVER BM", price: 4000 },
+  { name: "SPOCKET COVER TVS", price: 4000 },
+  { name: "SPOK MTB SZ26", price: 9000 },
+  { name: "SPOKERT F TVS", price: 1500 },
+  { name: "SPOKU PH", price: 9000 },
+  { name: "SPOKU SZ 24", price: 10000 },
+  { name: "SPOKU SZ 26 MTB", price: 10000 },
+  { name: "SPOKU SZ 26 SPORT", price: 12000 },
+  { name: "SPOKU SZ 27 SPORT", price: 8500 },
+  { name: "SPOKU SZ20", price: 9000 },
+  { name: "SPOKU TURBO", price: 15000 },
+  { name: "SPONCH CLEANER BM", price: 3500 },
+  { name: "SPONCH CLEANER GN", price: 1000 },
+  { name: "SPONCH STERLING", price: 3500 },
+  { name: "SPORKET F BM", price: 1500 },
+  { name: "SPORKET F GN", price: 1200 },
+  { name: "SPORKET F SINO", price: 1500 },
+  { name: "SPORKET F T18", price: 3000 },
+  { name: "SPORKET F TIMING", price: 4000 },
+  { name: "SPORKET F TIMING CHAIN", price: 3000 },
+  { name: "SPORKET F TVS", price: 1500 },
+  { name: "SPORKET F WITH LOCK", price: 1200 },
+  { name: "SPORKET KINGLION F", price: 2000 },
+  { name: "SPORKET SET BM", price: 6500 },
+  { name: "SPORKET SET CG", price: 6000 },
+  { name: "SPORKET SET GN", price: 5500 },
+  { name: "SPORKET T30 NYUMA", price: 8500 },
+  { name: "SPORKET T36 NYUMA", price: 8500 },
+  { name: "SPORKET TIMING CHAIN BM JUU", price: 3000 },
+  { name: "SPORKET XL SET", price: 8000 },
+  { name: "SPORT LIGHT 52 BEADS MACHO NYINGI", price: 13000 },
+  { name: "SPORT LIGHT ALM", price: 13000 },
+  { name: "SPORT LIGHT BB2208", price: 13000 },
+  { name: "SPORT LIGHT BLACK", price: 3000 },
+  { name: "SPORT LIGHT BOLT NEW", price: 3500 },
+  { name: "SPORT LIGHT BULB", price: 4000 },
+  { name: "SPORT LIGHT BULB GN", price: 5000 },
+  { name: "SPORT LIGHT CG", price: 14000 },
+  { name: "SPORT LIGHT FUVU", price: 35000 },
+  { name: "SPORT LIGHT FUVU RAHISI", price: 20000 },
+  { name: "SPORT LIGHT FUVU WAKAWAKA", price: 37000 },
+  { name: "SPORT LIGHT JICHO", price: 5000 },
+  { name: "SPORT LIGHT JICHO 2", price: 9000 },
+  { name: "SPORT LIGHT KIJANI", price: 4000 },
+  { name: "SPORT LIGHT M 3 KIBATI", price: 13000 },
+  { name: "SPORT LIGHT MACHO 12", price: 10000 },
+  { name: "SPORT LIGHT MACHO3 MOTORDAFISH", price: 10000 },
+  { name: "SPORT LIGHT MAINA", price: 12000 },
+  { name: "SPORT LIGHT MKANDA", price: 3500 },
+  { name: "SPORT LIGHT MWANGA ORG", price: 15000 },
+  { name: "SPORT LIGHT NEW", price: 17000 },
+  { name: "SPORT LIGHT ORG NO2", price: 12000 },
+  { name: "SPORT LIGHT PANA", price: 12000 },
+  { name: "SPORT LIGHT RANGI MACHO 2 NEW", price: 45000 },
+  { name: "SPORT LIGHT SHANGA", price: 1200 },
+  { name: "SPORT LIGHT SQUARE CG", price: 15000 },
+  { name: "SPORT LIGHT SUPER MACHO 4", price: 14000 },
+  { name: "SPORT LIGHT T2", price: 13000 },
+  { name: "SPRAY BLACK", price: 3000 },
+  { name: "SPRAY KIJANI", price: 2750 },
+  { name: "SPRING BREAK BM", price: 1000 },
+  { name: "SPRING JEMB CG", price: 300 },
+  { name: "SPRING JEMBE BREAK GN", price: 300 },
+  { name: "SIDE COVER BM150 5G RED AND YELLOW", price: 9000 },
+  { name: "SIDE COVER BM150 RED", price: 10000 },
+  { name: "SIDE COVER BMX", price: 12000 },
+  { name: "SIDE COVER CG BLACK", price: 6500 },
+  { name: "SIDE COVER CG RED", price: 6500 },
+  { name: "SIDE COVER FLOWER BLACK KAWAIDA", price: 7500 },
+  { name: "SIDE COVER FLOWER RED KAWAIDA", price: 7500 },
+  { name: "SIDE COVER GN 125 BLACK", price: 5000 },
+  { name: "SIDE COVER GN 125 RED", price: 5000 },
+  { name: "SIDE COVER GN 150 BLACK", price: 6000 },
+  { name: "SIDE COVER GN 150 RED", price: 5000 },
+  { name: "SIDE COVER GN BLUE", price: 5000 },
+  { name: "SIDE COVER GN TAW", price: 7000 },
+  { name: "SIDE COVER GUTA", price: 45000 },
+  { name: "SIDE COVER HJ 125 BLACK", price: 5500 },
+  { name: "SIDE COVER HJ 125 RED", price: 6500 },
+  { name: "SIDE COVER HLX 125 BLACK", price: 13000 },
+  { name: "SIDE COVER HLX 125 BLUE", price: 12000 },
+  { name: "SIDE COVER HLX 125 RED", price: 12000 },
+  { name: "SIDE COVER HLX 150 5GEAR BLACK", price: 13000 },
+  { name: "SIDE COVER HLX 150 BLACK", price: 13000 },
+  { name: "SIDE COVER HLX 150 BLUE", price: 12000 },
+  { name: "SIDE COVER HLX 150 NEW", price: 15000 },
+  { name: "SIDE COVER HLX 150 RED", price: 12000 },
+  { name: "SIDE COVER KING YAI BLACK NEW", price: 22000 },
+  { name: "SIDE COVER KING FLOWER RED", price: 13000 },
+  { name: "SIDE COVER KING SIMBA BLACK", price: 13000 },
+  { name: "SIDE COVER KING SIMBA RED", price: 13000 },
+  { name: "SIDE COVER KL 150 BLACK", price: 7500 },
+  { name: "SIDE COVER KL 150 CLASSIC BLACK", price: 23000 },
+  { name: "SIDE COVER KL 150 RED", price: 8000 },
+  { name: "SIDE COVER KL15O CLASS BLK", price: 22000 },
+  { name: "SIDE COVER NEW BLACK 180", price: 22000 },
+  { name: "SEAT COVER GN", price: 3500 },
+  { name: "SEAT COVER KINGLION", price: 4000 },
+  { name: "SEAT COVER PH", price: 1000 },
+  { name: "SEAT HYROD", price: 39000 },
+  { name: "SEAT KING GN", price: 40000 },
+  { name: "SEAT SINO KAWAIDA", price: 35000 },
+  { name: "SEAT SINO YAI", price: 42000 },
+  { name: "SEAT SINORAY UPELE", price: 38000 },
+  { name: "SELECTA GEAR", price: 1500 },
+  { name: "SELECTOR GEAR FULL", price: 2500 },
+  { name: "SENSA GEAR CC 200", price: 5000 },
+  { name: "SENSER GEAR GN", price: 2000 },
+  { name: "SENSER GEAR GUTTA", price: 4500 },
+  { name: "SENSER REJETA GUTA", price: 4000 },
+  { name: "SHAFT GEARBOX", price: 9000 },
+  { name: "SHAFT SEHEWA", price: 4500 },
+  { name: "SHAFT SPORKET BM 5G", price: 6000 },
+  { name: "SHAFT SPORKET GUTA SINO", price: 9000 },
+  { name: "SHAFT STAND BIG", price: 1500 },
+  { name: "SHAFTI SPORKET BM", price: 5500 },
+  { name: "SHAFTI SPORKET GN", price: 3500 },
+  { name: "SHINGO MTB", price: 3500 },
+  { name: "SHOCK UP RUBBER BM", price: 2000 },
+  { name: "SHOKUP BM F", price: 65000 },
+  { name: "SHOKUP CG F", price: 48000 },
+  { name: "SHOKUP F GUTA", price: 265000 },
+  { name: "SHOKUP F SANMOTO", price: 65000 },
+  { name: "SHOKUP F TVS", price: 65000 },
+  { name: "SHOKUP GN F", price: 55000 },
+  { name: "SHOKUP GUTA KAVU", price: 50000 },
+  { name: "SHOKUP KINGLION GN F", price: 65000 },
+  { name: "SHOKUP KINGLION R", price: 40000 },
+  { name: "SHOKUP MTB TRED", price: 25000 },
+  { name: "SHOKUP R APSONIC", price: 35000 },
+  { name: "SHOKUP R BM", price: 35000 },
+  { name: "SIDE COVER OG", price: 17000 },
+  { name: "SIDE COVER RED", price: 6000 },
+  { name: "SIDE COVER SINO 150 YAI RED", price: 16000 },
+  { name: "SIDE COVER SINO BLACK KAWAIDA", price: 12000 },
+  { name: "SIDE COVER SINO RED KAWAIDA", price: 12000 },
+  { name: "SIDE COVER SINO YAI NEW", price: 22000 },
+  { name: "SIDE MIRA BM", price: 5500 },
+  { name: "SIDE MIRA GUTA", price: 5500 },
+  { name: "SIDE MIRA HONDA", price: 5000 },
+  { name: "SIDE MIRA KINGLION", price: 7000 },
+  { name: "SIDE MIRA NDOGO", price: 6000 },
+  { name: "SIDE MIRA TVS", price: 5000 },
+  { name: "SIDE MIRROR BJ 100", price: 4000 },
+  { name: "SIDE MIRROR BM KEGE", price: 5000 },
+  { name: "SIDE MIRROR BM150", price: 5000 },
+  { name: "SIDE MIRROR GN", price: 7000 },
+  { name: "SIDE MIRROR HLX", price: 5000 },
+  { name: "SIDE MIRROR KEGE NDOGO", price: 5000 },
+  { name: "SIDE MIRROR NDOGO RANGI", price: 5000 },
+  { name: "SIDE MIRROR ROUND BIG", price: 5000 },
+  { name: "SILKON BIG BOX", price: 33000 },
+  { name: "SILKON BIG PC", price: 2800 },
+  { name: "SILKON NDOGO", price: 1500 },
+  { name: "SILKON NDOGO BOX", price: 18500 },
+  { name: "SOLUTION BIG", price: 11000 },
+  { name: "SOLUTION NDOGO", price: 3500 },
+  { name: "SPANA BB SET", price: 6000 },
+  { name: "SPANA CHAIN GN", price: 5000 },
+  { name: "SPANA FRAWIL", price: 5500 },
+  { name: "SPANA JEMBE MTB", price: 6000 },
+  { name: "SPANA SPOKU", price: 1000 },
+  { name: "SPEED GEAR BM", price: 3500 },
+  { name: "SPEED GEAR GN", price: 3000 },
+  { name: "SPEED METER BM", price: 3000 },
+  { name: "SPEED METER CABLE", price: 1700 },
+  { name: "SPRING KIKI BM", price: 3500 },
+  { name: "SPRING SET BRAKE GUTA", price: 5000 },
+  { name: "SPRING SET GN", price: 1000 },
+  { name: "SPRING SET GUTA R", price: 115000 },
+  { name: "SPRING SHOKUP F", price: 3000 },
+  { name: "SPRING SHOKUP GN", price: 5500 },
+  { name: "SPRING SHOKUP GUTA", price: 125000 },
+  { name: "SPRING SHOKUP MTB", price: 7000 },
+  { name: "SPRING STAND BIG", price: 350 },
+  { name: "SPRING STAND BM", price: 2000 },
+  { name: "SPRING STAND NDOGO", price: 350 },
+  { name: "SPRING VALVE BM", price: 3500 },
+  { name: "SPRING VALVE GN", price: 3000 },
+  { name: "STAD GUTA", price: 2500 },
+  { name: "STAD SPORKET BM", price: 1200 },
+  { name: "STAD SPORKET CG", price: 1000 },
+  { name: "STAD SPORKET GN", price: 1200 },
+  { name: "STAND BETTRY", price: 3500 },
+  { name: "STAND BIG BM", price: 12000 },
+  { name: "STAND BIG GN", price: 7000 },
+  { name: "STAND BIG KINGLION", price: 10000 },
+  { name: "STAND BIG SINO", price: 10000 },
+  { name: "STAND KIBOBO ALMNM", price: 2400 },
+  { name: "STAND KUBWA KING LION", price: 10000 },
+  { name: "STAND KUBWA SINO", price: 11000 },
+  { name: "STAND MAJI ALUM", price: 3000 },
+  { name: "STAND MTB", price: 3000 },
+  { name: "STAND NDOGO BM", price: 2500 },
+  { name: "STAND NDOGO GN", price: 2500 },
+  { name: "STAND NDOGO KING", price: 3500 },
+  { name: "STAND NDOGO SINO", price: 5000 },
+  { name: "STAND PH", price: 7500 },
+  { name: "STATA MOTOR TVS 125", price: 28000 },
+  { name: "STATER MOTOR 180 SINO", price: 32000 },
+  { name: "STATER MOTOR BM", price: 24000 }
+];
+
 function renderProductsPage() {
+  const active = STATE.products.filter((p) => !p.deleted);
+  const trashed = STATE.products.filter((p) => p.deleted);
+  const search = UI.search.trim().toLowerCase();
+  const filtered = search ? active.filter((p) => p.name.toLowerCase().includes(search)) : active;
+
   return `
   <div class="panel">
-    <h3>Your Products</h3>
-    ${STATE.products.length === 0 ? `<p class="empty-note">No products added yet.</p>` : `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0">Your Products (${active.length})</h3>
+      <button class="btn btn-sm btn-primary" onclick="importBulkProducts()">⬇️ Import Full Parts List (${BULK_PRODUCTS.length})</button>
+    </div>
+    ${filtered.length === 0 ? `<p class="empty-note">No products found.</p>` : `
     <div class="user-list">
-      ${STATE.products.map((p) => `
+      ${filtered.map((p) => `
         <div class="user-row">
-          <div class="user-row-main"><span class="user-name">${esc(p.name)}</span><span class="user-detail">${fmt(p.price)}</span></div>
-          <button class="icon-btn" onclick="removeProduct('${p.id}')">🗑️</button>
+          ${UI.editingProductId === p.id ? `
+            <input id="edit-price-${p.id}" class="field field-sm" style="width:120px" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
+            <button class="btn btn-sm btn-primary" onclick="saveProductPrice('${p.id}')">Save</button>
+            <button class="btn btn-sm btn-ghost" onclick="UI.editingProductId=null;rerender();">Cancel</button>
+          ` : `
+            <div class="user-row-main"><span class="user-name">${esc(p.name)}</span><span class="user-detail">${fmt(p.price)}</span></div>
+            <div style="display:flex;gap:6px">
+              <button class="icon-btn" style="color:#1677ff" onclick="UI.editingProductId='${p.id}';rerender();">✏️</button>
+              <button class="icon-btn" onclick="trashProduct('${p.id}')">🗑️</button>
+            </div>
+          `}
         </div>`).join("")}
     </div>`}
   </div>
+
   <div class="panel settings-panel" style="margin-top:16px">
     <h3>➕ Add Product</h3>
     <input id="pr-name" class="field" placeholder="Product name">
-    <input id="pr-price" class="field" type="text" inputmode="decimal" placeholder="Default price (TSh)" oninput="this.value=sanitizeNum(this.value)">
+    <input id="pr-price" class="field" type="text" inputmode="decimal" placeholder="Selling price (TSh)" oninput="this.value=sanitizeNum(this.value)">
     ${UI.userMsg && UI.userMsg.forProduct ? `<p class="settings-msg ${UI.userMsg.ok ? "ok" : "err"}">${esc(UI.userMsg.text)}</p>` : ""}
     <button class="btn btn-primary" onclick="addProduct()">Add Product</button>
-  </div>`;
+  </div>
+
+  <button class="history-toggle" onclick="UI.showProductTrash=!UI.showProductTrash;rerender();">
+    🗑️ Trash (${trashed.length}) ${UI.showProductTrash ? "▲" : "▼"}
+  </button>
+  ${UI.showProductTrash ? `
+    <div class="history-list">
+      ${trashed.length === 0 ? `<p class="empty-note">Trash is empty.</p>` : trashed.map((p) => `
+        <div class="history-row">
+          <div class="history-row-main"><span class="history-name">${esc(p.name)}</span><span class="history-detail">${fmt(p.price)}</span></div>
+          <div style="display:flex;gap:6px">
+            <button class="icon-btn restore" onclick="restoreProduct('${p.id}')">↩️</button>
+            <button class="icon-btn" onclick="permanentlyDeleteProduct('${p.id}')">❌</button>
+          </div>
+        </div>`).join("")}
+    </div>` : ""}
+  `;
 }
 function addProduct() {
   const name = document.getElementById("pr-name").value.trim();
   const price = Number(document.getElementById("pr-price").value);
   if (!name) { UI.userMsg = { ok: false, text: "Enter a product name.", forProduct: true }; return rerender(); }
-  if (STATE.products.some((p) => p.name.toLowerCase() === name.toLowerCase())) {
+  if (STATE.products.some((p) => !p.deleted && p.name.toLowerCase() === name.toLowerCase())) {
     UI.userMsg = { ok: false, text: "That product already exists.", forProduct: true }; return rerender();
   }
   STATE.products.push({ id: uid(), name, price: price || 0 });
@@ -378,9 +892,41 @@ function addProduct() {
   UI.userMsg = { ok: true, text: `${name} added.`, forProduct: true };
   rerender();
 }
-function removeProduct(id) {
+function saveProductPrice(id) {
+  const val = Number(document.getElementById("edit-price-" + id).value) || 0;
+  STATE.products = STATE.products.map((p) => (p.id === id ? { ...p, price: val } : p));
+  saveProducts();
+  UI.editingProductId = null;
+  rerender();
+}
+function trashProduct(id) {
+  STATE.products = STATE.products.map((p) => (p.id === id ? { ...p, deleted: true, deletedDate: todayStr() } : p));
+  saveProducts();
+  rerender();
+}
+function restoreProduct(id) {
+  STATE.products = STATE.products.map((p) => (p.id === id ? { ...p, deleted: false, deletedDate: null } : p));
+  saveProducts();
+  rerender();
+}
+function permanentlyDeleteProduct(id) {
+  if (!confirm("Permanently delete this product? This cannot be undone.")) return;
   STATE.products = STATE.products.filter((p) => p.id !== id);
   saveProducts();
+  rerender();
+}
+function importBulkProducts() {
+  const existingNames = new Set(STATE.products.map((p) => p.name.toLowerCase()));
+  let added = 0;
+  BULK_PRODUCTS.forEach((item) => {
+    if (!existingNames.has(item.name.toLowerCase())) {
+      STATE.products.push({ id: uid(), name: item.name, price: item.price });
+      existingNames.add(item.name.toLowerCase());
+      added++;
+    }
+  });
+  saveProducts();
+  UI.userMsg = { ok: true, text: `Imported ${added} new products (skipped duplicates).`, forProduct: true };
   rerender();
 }
 
@@ -486,6 +1032,89 @@ function alertRow(e) {
   </div>`;
 }
 
+/* ---------- SALES ---------- */
+function avgBuyPrice(itemId) {
+  const ins = STATE.stockMovements.filter((m) => m.itemId === itemId && m.type === "in" && m.price != null);
+  if (ins.length === 0) return null;
+  const totalQty = ins.reduce((s, m) => s + m.qty, 0);
+  const totalCost = ins.reduce((s, m) => s + m.qty * m.price, 0);
+  return totalQty > 0 ? totalCost / totalQty : null;
+}
+
+function renderSalesPage() {
+  const f = UI.saleForm;
+  const recent = [...STATE.sales].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 15);
+
+  return `
+  <div class="panel">
+    <h3>➕ Record a Sale</h3>
+    <select id="sl-item" class="field" onchange="setSaleField('itemId',this.value)">
+      <option value="">— Select item from stock —</option>
+      ${STATE.stockItems.map((it) => `<option value="${it.id}" ${f && f.itemId === it.id ? "selected" : ""}>${esc(it.name)} (${qtyOf(it.id)} in stock)</option>`).join("")}
+    </select>
+    <input id="sl-price" class="field" type="text" inputmode="decimal" placeholder="Selling price (per unit)" value="${f ? esc(f.price) : ""}" oninput="this.value=sanitizeNum(this.value);setSaleField('price',this.value)">
+    <input id="sl-qty" class="field" type="text" inputmode="numeric" placeholder="Quantity sold" value="${f ? esc(f.qty) : ""}" oninput="this.value=sanitizeNum(this.value);setSaleField('qty',this.value)">
+    <label class="due-label">📅 Date of sale</label>
+    <input id="sl-date" class="field" type="date" value="${f ? esc(f.date) : todayStr()}" oninput="setSaleField('date',this.value)">
+    ${f && f.itemId && f.price && f.qty ? `<div class="grand-total-row"><span>Total</span><span>${fmt(Number(f.price) * Number(f.qty))}</span></div>` : ""}
+    ${UI.saleMsg ? `<p class="settings-msg ${UI.saleMsg.ok ? "ok" : "err"}">${esc(UI.saleMsg.text)}</p>` : ""}
+    <button class="btn btn-primary" onclick="submitSale()">Record Sale</button>
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h3>Recent Sales</h3>
+    ${recent.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : `
+    <table class="recent-table"><tbody>
+      ${recent.map((s) => `
+        <tr>
+          <td>${esc(s.itemName)}</td>
+          <td>${s.qty} × ${fmt(s.sellPrice)}</td>
+          <td class="rt-amount">${fmt(s.total)}</td>
+          <td class="rt-date">${s.date}</td>
+        </tr>`).join("")}
+    </tbody></table>`}
+  </div>`;
+}
+function setSaleField(field, value) {
+  if (!UI.saleForm) UI.saleForm = { itemId: "", price: "", qty: "", date: todayStr() };
+  UI.saleForm[field] = value;
+  if (field === "itemId") {
+    const item = STATE.stockItems.find((it) => it.id === value);
+    if (item) {
+      const prod = STATE.products.find((p) => p.name.toLowerCase() === item.name.toLowerCase());
+      if (prod && !UI.saleForm.price) UI.saleForm.price = String(prod.price);
+    }
+  }
+  rerender();
+}
+function submitSale() {
+  const f = UI.saleForm;
+  UI.saleMsg = null;
+  if (!f || !f.itemId) { UI.saleMsg = { ok: false, text: "Select an item." }; return rerender(); }
+  const qty = Number(f.qty);
+  const price = Number(f.price);
+  if (!qty || qty <= 0) { UI.saleMsg = { ok: false, text: "Enter a valid quantity." }; return rerender(); }
+  if (!price || price <= 0) { UI.saleMsg = { ok: false, text: "Enter a valid selling price." }; return rerender(); }
+  const item = STATE.stockItems.find((it) => it.id === f.itemId);
+  const available = qtyOf(f.itemId);
+  if (qty > available) { UI.saleMsg = { ok: false, text: `Only ${available} in stock.` }; return rerender(); }
+
+  const buyPrice = avgBuyPrice(f.itemId);
+  const sale = {
+    id: uid(), itemId: f.itemId, itemName: item.name, sellPrice: price, qty,
+    total: price * qty, buyPrice, date: f.date || todayStr(),
+  };
+  STATE.sales.push(sale);
+  saveSales();
+
+  STATE.stockMovements.push({ id: uid(), itemId: f.itemId, type: "out", qty, destination: "Sale", date: sale.date });
+  saveStockMovements();
+
+  UI.saleForm = null;
+  UI.saleMsg = { ok: true, text: "Sale recorded." };
+  rerender();
+}
+
 /* ---------- REPORTS ---------- */
 function renderReports() {
   const all = STATE.entries;
@@ -500,6 +1129,24 @@ function renderReports() {
   const totalIssuedOwe = owe.reduce((s, e) => s + e.amount, 0);
   const totalCollected = owed.reduce((s, e) => s + e.payments.reduce((x, p) => x + p.amount, 0), 0);
   const totalPaidOut = owe.reduce((s, e) => s + e.payments.reduce((x, p) => x + p.amount, 0), 0);
+
+  const from = UI.plFrom || "0000-01-01";
+  const to = UI.plTo || "9999-12-31";
+  const salesInRange = STATE.sales.filter((s) => s.date >= from && s.date <= to).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const revenue = salesInRange.reduce((s, x) => s + x.total, 0);
+  const cost = salesInRange.reduce((s, x) => s + (x.buyPrice != null ? x.buyPrice * x.qty : 0), 0);
+  const unknownCostCount = salesInRange.filter((x) => x.buyPrice == null).length;
+  const profit = revenue - cost;
+
+  function setPreset(days) {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - (days - 1));
+    UI.plFrom = from.toISOString().slice(0, 10);
+    UI.plTo = to.toISOString().slice(0, 10);
+    rerender();
+  }
+  window.setPLPreset = setPreset;
 
   return `
   <div class="cards" style="grid-template-columns:repeat(4,1fr)">
@@ -523,6 +1170,44 @@ function renderReports() {
       ${topOwe.length === 0 ? `<p class="empty-note">Nothing outstanding.</p>` : topOwe.map((e) => `
         <div class="rank-row"><span>${esc(e.name)}</span><span class="rank-amt rust">${fmt(balanceOf(e))}</span></div>`).join("")}
     </div>
+  </div>
+
+  <div class="panel" id="sales-report-print" style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+      <h3 style="margin:0">💰 Sales Report &amp; Profit / Loss</h3>
+      <button class="btn btn-sm btn-primary no-print" onclick="window.print()">🖨️ Print</button>
+    </div>
+    <div class="discount-mode-toggle no-print" style="margin:10px 0">
+      <button class="chip-btn" onclick="setPLPreset(1)">Today</button>
+      <button class="chip-btn" onclick="setPLPreset(3)">Last 3 days</button>
+      <button class="chip-btn" onclick="setPLPreset(7)">Last 7 days</button>
+      <button class="chip-btn" onclick="setPLPreset(30)">Last 30 days</button>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px" class="no-print">
+      <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.plFrom)}" onchange="UI.plFrom=this.value;rerender();">
+      <span style="align-self:center;color:#8290a4">to</span>
+      <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.plTo)}" onchange="UI.plTo=this.value;rerender();">
+    </div>
+    <div class="cards" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+      ${statCard("Revenue", fmt(revenue), "total sales in range", "blue")}
+      ${statCard("Cost of Goods", fmt(cost), "based on buying price", "orange")}
+      ${statCard(profit >= 0 ? "Profit" : "Loss", fmt(Math.abs(profit)), "revenue minus cost", profit >= 0 ? "green" : "red")}
+    </div>
+    ${unknownCostCount > 0 ? `<p style="font-size:11.5px;color:#b8862f;margin-bottom:10px">⚠️ ${unknownCostCount} sale(s) in this range have no known buying price (item was never received with a price in Main Store), so cost/profit may be understated.</p>` : ""}
+    <table class="recent-table" style="width:100%">
+      <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Qty</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Sold @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Bought @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Profit</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Date</th></tr></thead>
+      <tbody>
+        ${salesInRange.length === 0 ? `<tr><td colspan="6" style="padding:14px;text-align:center;color:#a3aebe">No sales in this date range.</td></tr>` : salesInRange.map((s) => `
+          <tr>
+            <td style="padding:8px 6px">${esc(s.itemName)}</td>
+            <td style="padding:8px 6px;text-align:right">${s.qty}</td>
+            <td style="padding:8px 6px;text-align:right">${fmt(s.sellPrice)}</td>
+            <td style="padding:8px 6px;text-align:right">${s.buyPrice != null ? fmt(s.buyPrice) : "—"}</td>
+            <td style="padding:8px 6px;text-align:right;font-weight:600;color:${s.buyPrice != null ? "var(--green)" : "#a3aebe"}">${s.buyPrice != null ? fmt((s.sellPrice - s.buyPrice) * s.qty) : "—"}</td>
+            <td style="padding:8px 6px;text-align:right;color:#8290a4">${s.date}</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
   </div>`;
 }
 
@@ -1097,6 +1782,7 @@ function renderDeliveryNoteModal() {
     <div class="modal-stack" style="max-width:520px">
       <div class="receipt-print">
         <div style="text-align:center;margin-bottom:14px">
+          <div style="display:flex;justify-content:center;margin-bottom:6px">${logoSvg(48)}</div>
           <h2 style="margin:0">E.E.MSANGO COMPANY LIMITED</h2>
           <p style="font-size:11.5px;color:#6b7280;margin-top:4px">TIN NO: 118-065-771 &nbsp;·&nbsp; P.O. Box, Arusha</p>
           <p style="font-size:13px;font-weight:700;margin-top:8px;text-decoration:underline">DELIVERY NOTE</p>
@@ -1154,7 +1840,7 @@ function renderReceiptModal() {
   <div class="modal-overlay">
     <div class="modal-stack">
       <div class="receipt-print">
-        <h2 class="receipt-title">Receipt</h2>
+        <h2 class="receipt-title">${logoSvg(30)} Receipt</h2>
         <div class="receipt-meta">
           <div><strong>${esc(entry.name)}</strong>${entry.phone ? " · " + esc(entry.phone) : ""}</div>
           <div>Date: ${entry.dateCreated}</div>
