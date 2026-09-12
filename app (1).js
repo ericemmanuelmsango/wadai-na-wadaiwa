@@ -2621,20 +2621,13 @@ function renderMainStorePage() {
   </div>` : ""}
 
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${receiveOpen || dispatchOpen ? "0" : "10px"}">
-      <h3 style="margin:0">📥📤 Receive / Dispatch Stock</h3>
-      ${!receiveOpen && !dispatchOpen ? `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0">Current Stock</h3>
       <div style="display:flex;gap:8px">
         <button class="btn btn-sm btn-primary" onclick="startReceiveStock()">📥 Receive Stock</button>
         <button class="btn btn-sm btn-primary" onclick="startDispatchStock()">📤 Dispatch Stock</button>
-      </div>` : ""}
+      </div>
     </div>
-    ${receiveOpen ? renderReceiveForm() : ""}
-    ${dispatchOpen ? renderDispatchForm() : ""}
-  </div>
-
-  <div class="panel" style="margin-top:16px">
-    <h3 style="margin:0 0 10px">Current Stock</h3>
     ${STATE.stockItems.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : `
     <table class="recent-table" style="width:100%">
       <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
@@ -2657,6 +2650,9 @@ function renderMainStorePage() {
       </tbody>
     </table>`}
   </div>
+
+  ${receiveOpen ? renderReceiveForm() : ""}
+  ${dispatchOpen ? renderDispatchForm() : ""}
 
   <div class="panel" style="margin-top:16px">
     <h3>Recent Stock Movements</h3>
