@@ -46,7 +46,8 @@ let UI = {
   changeMsg: null,
   userMsg: null,
   err: null,
-  addItemsTo: null,
+  addChargeTo: null,
+  editingChargeId: null,
   financialsUnlocked: false,
   finPasswordInput: "",
   finPasswordError: null,
@@ -71,7 +72,20 @@ let charts = {};
 /* ---------- helpers ---------- */
 function fmt(n) { return "TSh " + Math.round(n || 0).toLocaleString("en-US"); }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
-function balanceOf(e) { return e.amount - e.payments.reduce((s, p) => s + p.amount, 0); }
+function getCharges(e) {
+  if (e.charges && e.charges.length) return e.charges;
+  // legacy entries stored amount/items/note at top level — treat as one charge
+  return [{ id: "legacy-" + e.id, date: e.dateCreated, description: e.note || "", amount: e.amount || 0, items: e.items }];
+}
+function totalAmount(e) { return getCharges(e).reduce((s, c) => s + c.amount, 0); }
+function balanceOf(e) { return totalAmount(e) - e.payments.reduce((s, p) => s + p.amount, 0); }
+function migrateToCharges(e) {
+  if (e.charges) return e;
+  return { ...e, charges: getCharges(e) };
+}
+function findExistingAccount(kind, name) {
+  return STATE.entries.find((e) => e.kind === kind && !e.archived && e.name.trim().toLowerCase() === name.trim().toLowerCase());
+}
 function dueStatus(e) {
   const bal = balanceOf(e);
   if (bal <= 0 || !e.dueDate) return null;
@@ -168,12 +182,20 @@ function loadState() {
     rerender();
   });
 }
-function saveEntries() { if (docRef) docRef.set({ entries: STATE.entries }, { merge: true }); }
-function saveProducts() { if (docRef) docRef.set({ products: STATE.products }, { merge: true }); }
-function saveStockItems() { if (docRef) docRef.set({ stockItems: STATE.stockItems }, { merge: true }); }
-function saveStockMovements() { if (docRef) docRef.set({ stockMovements: STATE.stockMovements }, { merge: true }); }
-function saveSales() { if (docRef) docRef.set({ sales: STATE.sales }, { merge: true }); }
-function saveSettings() { if (docRef) docRef.set({ settings: STATE.settings }, { merge: true }); }
+function onSaveError(err) {
+  UI.err = "⚠️ Could not sync to the cloud — check your internet connection and try again. Your last change may not be saved on other devices yet.";
+  UI.syncOk = false;
+  rerender();
+}
+function onSaveSuccess() {
+  if (UI.syncOk === false) { UI.syncOk = true; UI.err = null; rerender(); }
+}
+function saveEntries() { if (docRef) docRef.set({ entries: STATE.entries }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveProducts() { if (docRef) docRef.set({ products: STATE.products }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveStockItems() { if (docRef) docRef.set({ stockItems: STATE.stockItems }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveStockMovements() { if (docRef) docRef.set({ stockMovements: STATE.stockMovements }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveSales() { if (docRef) docRef.set({ sales: STATE.sales }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveSettings() { if (docRef) docRef.set({ settings: STATE.settings }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
 
 /* ---------- render with focus preservation ---------- */
 function rerender() {
@@ -2104,8 +2126,8 @@ function renderReports() {
   const topOwed = [...owed].sort((a, b) => balanceOf(b) - balanceOf(a)).filter((e) => balanceOf(e) > 0).slice(0, 5);
   const topOwe = [...owe].sort((a, b) => balanceOf(b) - balanceOf(a)).filter((e) => balanceOf(e) > 0).slice(0, 5);
 
-  const totalIssuedOwed = owed.reduce((s, e) => s + e.amount, 0);
-  const totalIssuedOwe = owe.reduce((s, e) => s + e.amount, 0);
+  const totalIssuedOwed = owed.reduce((s, e) => s + totalAmount(e), 0);
+  const totalIssuedOwe = owe.reduce((s, e) => s + totalAmount(e), 0);
   const totalCollected = owed.reduce((s, e) => s + e.payments.reduce((x, p) => x + p.amount, 0), 0);
   const totalPaidOut = owe.reduce((s, e) => s + e.payments.reduce((x, p) => x + p.amount, 0), 0);
 
@@ -2300,7 +2322,7 @@ function renderColumnPage(kind) {
 function startAdd(kind) {
   const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
   UI[key] = {
-    mode: "simple", discountMode: "price", name: "", phone: "", note: "", dueDate: "", amount: "",
+    mode: "simple", discountMode: "price", name: "", phone: "", note: "", dueDate: "", amount: "", forceNew: false,
     rows: [{ id: uid(), name: "", price: "", discountPrice: "", discountPercent: "", qty: "1" }],
   };
   rerender();
@@ -2314,15 +2336,24 @@ function renderEntryForm(kind) {
   const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
   const f = UI[key];
   const grandTotal = f.rows.reduce((s, r) => s + lineTotalOf(r, f.discountMode), 0);
+  const match = f.name.trim() && !f.forceNew ? findExistingAccount(kind, f.name) : null;
 
   return `
   <div class="entry-form">
+    <input id="ef-name" class="field" placeholder="Name" value="${esc(f.name)}" oninput="setFormField('${kind}','name',this.value)">
+    ${match ? `
+      <div class="reminder-bar" style="margin:0;padding:10px 12px">
+        <div style="font-size:12.5px">⚠️ <strong>${esc(match.name)}</strong> already has an account here — balance: <strong>${fmt(balanceOf(match))}</strong>. This will be <strong>added to that account</strong>.</div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#6b7280;margin-top:6px">
+          <input type="checkbox" onchange="setFormField('${kind}','forceNew',this.checked)">
+          This is a different person with the same name — create a separate account
+        </label>
+      </div>` : ""}
+    <input id="ef-phone" class="field" placeholder="Phone (optional)" value="${esc(f.phone)}" oninput="setFormField('${kind}','phone',this.value)">
     <div class="mode-toggle">
       <button class="mode-btn ${f.mode === "simple" ? "active" : ""}" onclick="setFormField('${kind}','mode','simple')">✎ Simple Amount</button>
       <button class="mode-btn ${f.mode === "items" ? "active" : ""}" onclick="setFormField('${kind}','mode','items')">☰ Itemized Order</button>
     </div>
-    <input id="ef-name" class="field" placeholder="Name" value="${esc(f.name)}" oninput="setFormField('${kind}','name',this.value)">
-    <input id="ef-phone" class="field" placeholder="Phone (optional)" value="${esc(f.phone)}" oninput="setFormField('${kind}','phone',this.value)">
     ${f.mode === "simple" ? `
       <input id="ef-amount" class="field" type="text" inputmode="decimal" placeholder="Amount (TSh)" value="${esc(f.amount)}" oninput="this.value=sanitizeNum(this.value);setFormField('${kind}','amount',this.value)">
     ` : `
@@ -2387,14 +2418,10 @@ function removeRow(kind, rowId) {
   rerender();
 }
 
-function submitEntry(kind) {
-  const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
-  const f = UI[key];
-  if (!f.name.trim()) return;
+function buildChargeFromForm(f) {
   const grandTotal = f.rows.reduce((s, r) => s + lineTotalOf(r, f.discountMode), 0);
   const finalAmount = f.mode === "simple" ? Number(f.amount) : grandTotal;
-  if (!finalAmount || finalAmount <= 0) return;
-
+  if (!finalAmount || finalAmount <= 0) return null;
   let items;
   if (f.mode === "items") {
     items = f.rows.filter((r) => r.name.trim()).map((r) => {
@@ -2410,21 +2437,54 @@ function submitEntry(kind) {
       return { name: r.name.trim(), price, discountPrice, discountPercent, qty, lineTotal: discountPrice * qty };
     });
   }
+  return {
+    id: uid(), date: todayStr(), description: f.note.trim(), amount: finalAmount,
+    ...(items && items.length ? { items } : {}),
+  };
+}
+
+function submitEntry(kind) {
+  const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
+  const f = UI[key];
+  if (!f.name.trim()) return;
+  const charge = buildChargeFromForm(f);
+  if (!charge) return;
+
+  const match = !f.forceNew ? findExistingAccount(kind, f.name) : null;
+
+  if (match) {
+    STATE.entries = STATE.entries.map((e) => {
+      if (e.id !== match.id) return e;
+      const migrated = migrateToCharges(e);
+      return {
+        ...migrated,
+        charges: [...migrated.charges, charge],
+        phone: e.phone || f.phone.trim(),
+        dueDate: f.dueDate || e.dueDate,
+      };
+    });
+    saveEntries();
+    UI[key] = null;
+    if (charge.items && charge.items.length) UI.receiptEntryId = match.id;
+    rerender();
+    return;
+  }
 
   const entry = {
-    id: uid(), kind, name: f.name.trim(), phone: f.phone.trim(), amount: finalAmount,
-    note: f.note.trim(), dueDate: f.dueDate || null, dateCreated: todayStr(), payments: [],
-    ...(items && items.length ? { items } : {}),
+    id: uid(), kind, name: f.name.trim(), phone: f.phone.trim(),
+    dueDate: f.dueDate || null, dateCreated: todayStr(), payments: [], charges: [charge],
   };
   STATE.entries.push(entry);
   saveEntries();
   UI[key] = null;
-  if (entry.items && entry.items.length) UI.receiptEntryId = entry.id;
+  if (charge.items && charge.items.length) UI.receiptEntryId = entry.id;
   rerender();
 }
 
 /* ---------- CARD ---------- */
 function renderCard(entry, expandedKey) {
+  const charges = getCharges(entry);
+  const total = totalAmount(entry);
   const paid = entry.payments.reduce((s, p) => s + p.amount, 0);
   const balance = balanceOf(entry);
   const isCleared = balance <= 0;
@@ -2449,26 +2509,17 @@ function renderCard(entry, expandedKey) {
     </button>
     ${expanded ? `
       <div class="card-body">
-        ${entry.note ? `<p class="card-note">${esc(entry.note)}</p>` : ""}
-        ${entry.items && entry.items.length ? `
-          <div class="items-summary">
-            ${entry.items.map((it) => `
-              <div class="items-summary-row">
-                <span>${esc(it.name)}${it.dateAdded && it.dateAdded !== entry.dateCreated ? ` <span style="color:#a3aebe;font-size:10.5px">(added ${it.dateAdded})</span>` : ""}</span>
-                <span class="isr-detail">${it.qty} × ${fmt(it.discountPrice)}${it.discountPercent ? ` (-${it.discountPercent}%)` : ""}</span>
-                <span class="isr-total">${fmt(it.lineTotal)}</span>
-              </div>`).join("")}
-          </div>
-          <button class="receipt-link-btn" onclick="UI.receiptEntryId='${entry.id}';rerender();">🖨️ View Receipt</button>
-        ` : ""}
+        <div class="items-summary" style="margin-top:10px">
+          ${charges.map((c) => renderChargeRow(entry, c)).join("")}
+        </div>
         <div class="card-stats">
-          <div><span class="stat-label">Total</span><span class="stat-val">${fmt(entry.amount)}</span></div>
+          <div><span class="stat-label">Total</span><span class="stat-val">${fmt(total)}</span></div>
           <div><span class="stat-label">Paid</span><span class="stat-val">${fmt(paid)}</span></div>
           <div><span class="stat-label">Remaining Balance</span><span class="stat-val strong">${fmt(Math.max(balance, 0))}</span></div>
         </div>
         ${entry.payments.length ? `
           <div class="payment-history">
-            ${entry.payments.map((p) => `<div class="payment-row">📅 <span>${p.date}</span><span class="payment-amt">+${fmt(p.amount)}</span></div>`).join("")}
+            ${entry.payments.map((p, i) => `<div class="payment-row">📅 <span>${p.date}</span><span class="payment-amt">+${fmt(p.amount)}</span><button class="icon-btn" style="padding:2px" onclick="deletePayment('${entry.id}',${i})">🗑️</button></div>`).join("")}
           </div>` : ""}
         ${!isCleared ? `
           <div class="pay-row">
@@ -2477,9 +2528,43 @@ function renderCard(entry, expandedKey) {
             <button class="btn btn-sm btn-primary" onclick="recordPayment('${entry.id}')">✓ Record Payment</button>
           </div>` : `
           <button class="archive-btn" onclick="archiveEntry('${entry.id}')">🗄️ Move to History</button>`}
-        ${entry.items && entry.items.length ? renderAddItemsSection(entry) : ""}
+        ${renderAddChargeSection(entry)}
       </div>` : ""}
   </div>`;
+}
+
+function renderChargeRow(entry, c) {
+  const isEditing = UI.editingChargeId === c.id;
+  if (isEditing) {
+    return `<div style="padding:8px 0">${renderAddChargeForm(entry.id, true)}</div>`;
+  }
+  if (c.items && c.items.length) {
+    return `
+      <div style="border-bottom:1px solid var(--line);padding:6px 0">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#8290a4;margin-bottom:2px">
+          <span>${c.date}${c.description ? " · " + esc(c.description) : ""}</span>
+          <span style="display:flex;gap:4px">
+            <button class="icon-btn" style="color:#1677ff;padding:2px" onclick="startEditCharge('${entry.id}','${c.id}')">✏️</button>
+            <button class="icon-btn" style="padding:2px" onclick="deleteCharge('${entry.id}','${c.id}')">🗑️</button>
+          </span>
+        </div>
+        ${c.items.map((it) => `
+          <div class="items-summary-row" style="border:none;padding:3px 0">
+            <span>${esc(it.name)}</span>
+            <span class="isr-detail">${it.qty} × ${fmt(it.discountPrice)}${it.discountPercent ? ` (-${it.discountPercent}%)` : ""}</span>
+            <span class="isr-total">${fmt(it.lineTotal)}</span>
+          </div>`).join("")}
+      </div>`;
+  }
+  return `
+    <div class="items-summary-row">
+      <span>${esc(c.description || "Charge")} <span style="color:#a3aebe;font-size:10.5px">${c.date}</span></span>
+      <span class="isr-total">${fmt(c.amount)}</span>
+      <span style="display:flex;gap:4px;margin-left:8px">
+        <button class="icon-btn" style="color:#1677ff;padding:2px" onclick="startEditCharge('${entry.id}','${c.id}')">✏️</button>
+        <button class="icon-btn" style="padding:2px" onclick="deleteCharge('${entry.id}','${c.id}')">🗑️</button>
+      </span>
+    </div>`;
 }
 
 function toggleCard(expandedKey, id) {
@@ -2496,6 +2581,17 @@ function recordPayment(id) {
   saveEntries();
   rerender();
 }
+function deletePayment(entryId, index) {
+  if (!confirm("Delete this payment record?")) return;
+  STATE.entries = STATE.entries.map((e) => {
+    if (e.id !== entryId) return e;
+    const payments = e.payments.slice();
+    payments.splice(index, 1);
+    return { ...e, payments };
+  });
+  saveEntries();
+  rerender();
+}
 function archiveEntry(id) {
   STATE.entries = STATE.entries.map((e) => (e.id === id ? { ...e, archived: true, archivedDate: todayStr() } : e));
   saveEntries();
@@ -2507,89 +2603,120 @@ function restoreEntry(id) {
   rerender();
 }
 
-/* ---------- ADD MORE ITEMS TO AN EXISTING ORDER ---------- */
-function renderAddItemsSection(entry) {
-  const isOpen = UI.addItemsTo && UI.addItemsTo.entryId === entry.id;
-  if (!isOpen) {
-    return `<button class="add-btn" style="margin-top:8px" onclick="startAddItems('${entry.id}')">＋ Add More Items (another day)</button>`;
+/* ---------- ADD / EDIT A CHARGE ON AN EXISTING ACCOUNT ---------- */
+function startAddCharge(entryId) {
+  UI.addChargeTo = { entryId, mode: "simple", discountMode: "price", note: "", amount: "",
+    rows: [{ id: uid(), name: "", price: "", discountPrice: "", discountPercent: "", qty: "1" }] };
+  rerender();
+}
+function startEditCharge(entryId, chargeId) {
+  const entry = STATE.entries.find((e) => e.id === entryId);
+  const charge = getCharges(entry).find((c) => c.id === chargeId);
+  if (!charge) return;
+  UI.editingChargeId = chargeId;
+  if (charge.items && charge.items.length) {
+    UI.addChargeTo = {
+      entryId, mode: "items", discountMode: "price", note: charge.description || "",
+      rows: charge.items.map((it) => ({ id: uid(), name: it.name, price: String(it.price), discountPrice: String(it.discountPrice), discountPercent: it.discountPercent != null ? String(it.discountPercent) : "", qty: String(it.qty) })),
+    };
+  } else {
+    UI.addChargeTo = { entryId, mode: "simple", discountMode: "price", note: charge.description || "", amount: String(charge.amount),
+      rows: [{ id: uid(), name: "", price: "", discountPrice: "", discountPercent: "", qty: "1" }] };
   }
-  const f = UI.addItemsTo;
+  rerender();
+}
+function cancelAddCharge() { UI.addChargeTo = null; UI.editingChargeId = null; rerender(); }
+function setChargeField(field, value) { UI.addChargeTo[field] = value; rerender(); }
+function setChargeRow(rowId, field, value) {
+  const f = UI.addChargeTo;
+  f.rows = f.rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r));
+  if (field === "name") {
+    const p = STATE.products.find((p) => p.name.toLowerCase() === value.trim().toLowerCase());
+    const row = f.rows.find((r) => r.id === rowId);
+    if (p && !row.price) row.price = String(p.price);
+  }
+  rerender();
+}
+function addChargeRow() { UI.addChargeTo.rows.push({ id: uid(), name: "", price: "", discountPrice: "", discountPercent: "", qty: "1" }); rerender(); }
+function removeChargeRow(rowId) { UI.addChargeTo.rows = UI.addChargeTo.rows.filter((r) => r.id !== rowId); rerender(); }
+
+function renderAddChargeSection(entry) {
+  if (!UI.addChargeTo || UI.addChargeTo.entryId !== entry.id || UI.editingChargeId) {
+    return `<button class="add-btn" style="margin-top:10px" onclick="startAddCharge('${entry.id}')">＋ Add Charge to This Account</button>`;
+  }
+  return `<div style="margin-top:10px">${renderAddChargeForm(entry.id, false)}</div>`;
+}
+
+function renderAddChargeForm(entryId, isEdit) {
+  const f = UI.addChargeTo;
   const grandTotal = f.rows.reduce((s, r) => s + lineTotalOf(r, f.discountMode), 0);
   return `
-  <div class="items-block" style="margin-top:10px">
-    <div class="discount-mode-toggle">
-      <span>Discount type:</span>
-      <button class="chip-btn ${f.discountMode === "price" ? "active" : ""}" onclick="setAddItemsField('discountMode','price')">Discounted Price</button>
-      <button class="chip-btn ${f.discountMode === "percent" ? "active" : ""}" onclick="setAddItemsField('discountMode','percent')">% Discount</button>
+  <div class="entry-form">
+    <div class="mode-toggle">
+      <button class="mode-btn ${f.mode === "simple" ? "active" : ""}" onclick="setChargeField('mode','simple')">✎ Simple Amount</button>
+      <button class="mode-btn ${f.mode === "items" ? "active" : ""}" onclick="setChargeField('mode','items')">☰ Itemized</button>
     </div>
-    <label class="due-label">📅 Date of this addition</label>
-    <input id="add-items-date" class="field field-sm" type="date" value="${esc(f.date)}" oninput="setAddItemsField('date',this.value)">
-    <div class="item-row item-row-head">
-      <span>Item</span><span>Price</span><span>${f.discountMode === "percent" ? "% Discount" : "Discounted Price"}</span><span>Qty</span><span>Total</span><span></span>
-    </div>
-    ${f.rows.map((r) => `
-      <div class="item-row">
-        <input list="product-datalist" id="ai-name-${r.id}" class="field field-sm" placeholder="Item" value="${esc(r.name)}" oninput="setAddItemRow('${r.id}','name',this.value)" onchange="onAddItemNameChange('${r.id}',this.value)">
-        <input id="ai-price-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setAddItemRow('${r.id}','price',this.value)">
-        ${f.discountMode === "percent" ? `
-          <input id="ai-dp-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="% Discount" value="${esc(r.discountPercent)}" oninput="this.value=sanitizeNum(this.value);setAddItemRow('${r.id}','discountPercent',this.value)">
-        ` : `
-          <input id="ai-dp-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Discounted Price" value="${esc(r.discountPrice)}" oninput="this.value=sanitizeNum(this.value);setAddItemRow('${r.id}','discountPrice',this.value)">
-        `}
-        <input id="ai-qty-${r.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setAddItemRow('${r.id}','qty',this.value)">
-        <span class="item-line-total">${fmt(lineTotalOf(r, f.discountMode))}</span>
-        ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeAddItemRow('${r.id}')">🗑️</button>` : `<span></span>`}
-      </div>`).join("")}
-    <button class="add-row-btn" onclick="addAddItemRow()">＋ Add Item</button>
-    <div class="grand-total-row"><span>New Items Total</span><span>${fmt(grandTotal)}</span></div>
+    ${f.mode === "simple" ? `
+      <input class="field" type="text" inputmode="decimal" placeholder="Amount (TSh)" value="${esc(f.amount)}" oninput="this.value=sanitizeNum(this.value);setChargeField('amount',this.value)">
+    ` : `
+      <div class="items-block">
+        <div class="item-row item-row-head">
+          <span>Item</span><span>Price</span><span>Discounted Price</span><span>Qty</span><span>Total</span><span></span>
+        </div>
+        ${f.rows.map((r) => `
+          <div class="item-row">
+            <input list="product-datalist" class="field field-sm" placeholder="Item" value="${esc(r.name)}" oninput="setChargeRow('${r.id}','name',this.value)">
+            <input class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','price',this.value)">
+            <input class="field field-sm" type="text" inputmode="decimal" placeholder="Discounted Price" value="${esc(r.discountPrice)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','discountPrice',this.value)">
+            <input class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','qty',this.value)">
+            <span class="item-line-total">${fmt(lineTotalOf(r, f.discountMode))}</span>
+            ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeChargeRow('${r.id}')">🗑️</button>` : `<span></span>`}
+          </div>`).join("")}
+        <button class="add-row-btn" onclick="addChargeRow()">＋ Add Item</button>
+        <div class="grand-total-row"><span>Total</span><span>${fmt(grandTotal)}</span></div>
+      </div>
+    `}
+    <input class="field" placeholder="Note (optional)" value="${esc(f.note)}" oninput="setChargeField('note',this.value)">
     <div class="form-actions">
-      <button class="btn btn-ghost" onclick="UI.addItemsTo=null;rerender();">Cancel</button>
-      <button class="btn btn-primary" onclick="submitAddItems('${entry.id}')">Save Additions</button>
+      <button class="btn btn-ghost" onclick="cancelAddCharge()">Cancel</button>
+      <button class="btn btn-primary" onclick="${isEdit ? `saveEditedCharge('${entryId}')` : `submitAddCharge('${entryId}')`}">Save</button>
     </div>
   </div>`;
 }
-function startAddItems(entryId) {
-  UI.addItemsTo = { entryId, discountMode: "price", date: todayStr(), rows: [{ id: uid(), name: "", price: "", discountPrice: "", discountPercent: "", qty: "1" }] };
-  rerender();
-}
-function setAddItemsField(field, value) { UI.addItemsTo[field] = value; rerender(); }
-function setAddItemRow(rowId, field, value) {
-  UI.addItemsTo.rows = UI.addItemsTo.rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r));
-  rerender();
-}
-function onAddItemNameChange(rowId, name) {
-  const p = STATE.products.find((p) => p.name.toLowerCase() === name.trim().toLowerCase());
-  if (p) setAddItemRow(rowId, "price", String(p.price));
-}
-function addAddItemRow() {
-  UI.addItemsTo.rows.push({ id: uid(), name: "", price: "", discountPrice: "", discountPercent: "", qty: "1" });
-  rerender();
-}
-function removeAddItemRow(rowId) {
-  UI.addItemsTo.rows = UI.addItemsTo.rows.filter((r) => r.id !== rowId);
-  rerender();
-}
-function submitAddItems(entryId) {
-  const f = UI.addItemsTo;
-  const newItems = f.rows.filter((r) => r.name.trim() && Number(r.qty) > 0).map((r) => {
-    const price = Number(r.price || 0);
-    const qty = Number(r.qty || 0);
-    let discountPrice, discountPercent = null;
-    if (f.discountMode === "percent") {
-      discountPercent = Number(r.discountPercent || 0);
-      discountPrice = price * (1 - discountPercent / 100);
-    } else {
-      discountPrice = Number(r.discountPrice || r.price || 0);
-    }
-    return { name: r.name.trim(), price, discountPrice, discountPercent, qty, lineTotal: discountPrice * qty, dateAdded: f.date };
+function submitAddCharge(entryId) {
+  const charge = buildChargeFromForm(UI.addChargeTo);
+  if (!charge) return;
+  STATE.entries = STATE.entries.map((e) => {
+    if (e.id !== entryId) return e;
+    const migrated = migrateToCharges(e);
+    return { ...migrated, charges: [...migrated.charges, charge] };
   });
-  if (newItems.length === 0) return;
-  const addedTotal = newItems.reduce((s, it) => s + it.lineTotal, 0);
-  STATE.entries = STATE.entries.map((e) =>
-    e.id === entryId ? { ...e, items: [...e.items, ...newItems], amount: e.amount + addedTotal } : e
-  );
   saveEntries();
-  UI.addItemsTo = null;
+  UI.addChargeTo = null;
+  rerender();
+}
+function saveEditedCharge(entryId) {
+  const newCharge = buildChargeFromForm(UI.addChargeTo);
+  if (!newCharge) return;
+  const chargeId = UI.editingChargeId;
+  STATE.entries = STATE.entries.map((e) => {
+    if (e.id !== entryId) return e;
+    const migrated = migrateToCharges(e);
+    return { ...migrated, charges: migrated.charges.map((c) => (c.id === chargeId ? { ...newCharge, id: chargeId, date: c.date } : c)) };
+  });
+  saveEntries();
+  UI.addChargeTo = null;
+  UI.editingChargeId = null;
+  rerender();
+}
+function deleteCharge(entryId, chargeId) {
+  if (!confirm("Delete this charge? This will reduce the account total.")) return;
+  STATE.entries = STATE.entries.map((e) => {
+    if (e.id !== entryId) return e;
+    const migrated = migrateToCharges(e);
+    return { ...migrated, charges: migrated.charges.filter((c) => c.id !== chargeId) };
+  });
+  saveEntries();
   rerender();
 }
 
@@ -2873,6 +3000,9 @@ function checkAlertsForNotification() {
 function renderReceiptModal() {
   const entry = STATE.entries.find((e) => e.id === UI.receiptEntryId);
   if (!entry) return "";
+  const charges = getCharges(entry).filter((c) => c.items && c.items.length);
+  const charge = charges[charges.length - 1];
+  if (!charge) return "";
   return `
   <div class="modal-overlay">
     <div class="modal-stack">
@@ -2880,17 +3010,17 @@ function renderReceiptModal() {
         <h2 class="receipt-title" style="display:flex;align-items:center;gap:8px;justify-content:center">${companyLogo(30)} Receipt</h2>
         <div class="receipt-meta">
           <div><strong>${esc(entry.name)}</strong>${entry.phone ? " · " + esc(entry.phone) : ""}</div>
-          <div>Date: ${entry.dateCreated}</div>
+          <div>Date: ${charge.date}</div>
           ${entry.dueDate ? `<div>Due Date: ${entry.dueDate}</div>` : ""}
         </div>
         <table class="receipt-table">
           <thead><tr><th>Item</th><th>Price</th><th>Discount</th><th>Qty</th><th>Total</th></tr></thead>
           <tbody>
-            ${entry.items.map((it) => `<tr><td>${esc(it.name)}</td><td>${fmt(it.price)}</td><td>${it.discountPercent ? it.discountPercent + "%" : fmt(it.discountPrice)}</td><td>${it.qty}</td><td>${fmt(it.lineTotal)}</td></tr>`).join("")}
+            ${charge.items.map((it) => `<tr><td>${esc(it.name)}</td><td>${fmt(it.price)}</td><td>${it.discountPercent ? it.discountPercent + "%" : fmt(it.discountPrice)}</td><td>${it.qty}</td><td>${fmt(it.lineTotal)}</td></tr>`).join("")}
           </tbody>
         </table>
-        <div class="receipt-total-row"><span>Grand Total</span><span>${fmt(entry.amount)}</span></div>
-        ${entry.note ? `<p style="margin-top:10px;font-style:italic;color:#6b7280;font-size:12px">${esc(entry.note)}</p>` : ""}
+        <div class="receipt-total-row"><span>Grand Total</span><span>${fmt(charge.amount)}</span></div>
+        ${charge.description ? `<p style="margin-top:10px;font-style:italic;color:#6b7280;font-size:12px">${esc(charge.description)}</p>` : ""}
       </div>
       <div class="modal-actions no-print">
         <button class="btn btn-ghost" onclick="UI.receiptEntryId=null;rerender();">Close</button>
@@ -2925,8 +3055,8 @@ function renderCharts() {
     STATE.entries.forEach((e) => {
       const key = e.dateCreated.slice(0, 7);
       if (!map[key]) map[key] = { Debtors: 0, Creditors: 0 };
-      if (e.kind === "owed_to_me") map[key].Debtors += e.amount;
-      else map[key].Creditors += e.amount;
+      if (e.kind === "owed_to_me") map[key].Debtors += totalAmount(e);
+      else map[key].Creditors += totalAmount(e);
     });
     const months = Object.keys(map).sort().slice(-6);
     charts.monthly = new Chart(monthlyCanvas, {
