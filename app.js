@@ -372,7 +372,7 @@ function renderShell() {
 
         ${UI.err ? `<div class="err-banner">${esc(UI.err)}<button onclick="UI.err=null;rerender();">✕</button></div>` : ""}
 
-        ${renderPage(UI.page)}
+        ${safeRenderPage(UI.page)}
       </section>
     </main>
     ${UI.receiptEntryId ? renderReceiptModal() : ""}
@@ -384,6 +384,18 @@ function renderShell() {
 }
 
 function setPage(p) { UI.page = p; UI.receiptEntryId = null; rerender(); }
+
+function safeRenderPage(page) {
+  try {
+    return renderPage(page);
+  } catch (err) {
+    return `<div class="err-banner" style="display:block">
+      <strong>⚠️ Something went wrong showing this page.</strong><br>
+      <span style="font-size:11.5px;word-break:break-all">${esc(err.message)}</span><br>
+      <span style="font-size:11.5px">Please screenshot this and send it back.</span>
+    </div>`;
+  }
+}
 
 function renderPage(page) {
   if (page === "dashboard") return renderDashboard();
@@ -1776,8 +1788,8 @@ const BULK_PRODUCTS = [
 ];
 
 function renderProductsPage() {
-  const active = STATE.products.filter((p) => !p.deleted);
-  const trashed = STATE.products.filter((p) => p.deleted);
+  const active = STATE.products.filter((p) => !p.deleted).sort((a, b) => a.name.localeCompare(b.name));
+  const trashed = STATE.products.filter((p) => p.deleted).sort((a, b) => a.name.localeCompare(b.name));
   const search = UI.search.trim().toLowerCase();
   const filtered = search ? active.filter((p) => p.name.toLowerCase().includes(search)) : active;
 
@@ -2023,7 +2035,9 @@ function renderSalesPage() {
   if (!UI.saleForm) UI.saleForm = { date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
   const f = UI.saleForm;
   const grandTotal = f.rows.reduce((s, r) => s + (Number(r.price) || 0) * (Number(r.qty) || 0), 0);
-  const recent = [...STATE.sales].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 20);
+  const salesByDay = {};
+  STATE.sales.forEach((s) => { (salesByDay[s.date] = salesByDay[s.date] || []).push(s); });
+  const days = Object.keys(salesByDay).sort((a, b) => (a < b ? 1 : -1));
 
   return `
   <div class="panel">
@@ -2058,18 +2072,27 @@ function renderSalesPage() {
   </div>
 
   <div class="panel" style="margin-top:16px">
-    <h3>Recent Sales</h3>
-    ${recent.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : `
-    <table class="recent-table"><tbody>
-      ${recent.map((s) => `
-        <tr>
-          <td>${esc(s.itemName)}</td>
-          <td>${s.qty} × ${fmt(s.sellPrice)}</td>
-          <td class="rt-amount">${fmt(s.total)}</td>
-          <td class="rt-date">${s.date}</td>
-          <td><button class="icon-btn" onclick="deleteSale('${s.id}')">🗑️</button></td>
-        </tr>`).join("")}
-    </tbody></table>`}
+    <h3>Sales by Day</h3>
+    ${days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : days.map((day) => {
+      const list = salesByDay[day];
+      const dayTotal = list.reduce((s, x) => s + x.total, 0);
+      return `
+      <div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 4px;border-bottom:2px solid var(--line)">
+          <strong style="font-size:13px">${day}</strong>
+          <span style="font-size:12.5px;font-weight:700;color:var(--green)">${fmt(dayTotal)}</span>
+        </div>
+        <table class="recent-table"><tbody>
+          ${list.map((s) => `
+            <tr>
+              <td>${esc(s.itemName)}</td>
+              <td>${s.qty} × ${fmt(s.sellPrice)}</td>
+              <td class="rt-amount">${fmt(s.total)}</td>
+              <td><button class="icon-btn" onclick="deleteSale('${s.id}')">🗑️</button></td>
+            </tr>`).join("")}
+        </tbody></table>
+      </div>`;
+    }).join("")}
   </div>`;
 }
 function submitSale() {
@@ -2345,7 +2368,7 @@ function renderEntryForm(kind) {
       <div class="reminder-bar" style="margin:0;padding:10px 12px">
         <div style="font-size:12.5px">⚠️ <strong>${esc(match.name)}</strong> already has an account here — balance: <strong>${fmt(balanceOf(match))}</strong>. This will be <strong>added to that account</strong>.</div>
         <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#6b7280;margin-top:6px">
-          <input type="checkbox" onchange="setFormField('${kind}','forceNew',this.checked)">
+          <input type="checkbox" ${f.forceNew ? "checked" : ""} onchange="setFormField('${kind}','forceNew',this.checked)">
           This is a different person with the same name — create a separate account
         </label>
       </div>` : ""}
@@ -2519,7 +2542,7 @@ function renderCard(entry, expandedKey) {
         </div>
         ${entry.payments.length ? `
           <div class="payment-history">
-            ${entry.payments.map((p, i) => `<div class="payment-row">📅 <span>${p.date}</span><span class="payment-amt">+${fmt(p.amount)}</span><button class="icon-btn" style="padding:2px" onclick="deletePayment('${entry.id}',${i})">🗑️</button></div>`).join("")}
+            ${entry.payments.map((p, i) => `<div class="payment-row">📅 <span>${p.date}</span><span class="payment-amt">+${fmt(p.amount)}</span><button class="icon-btn"  onclick="deletePayment('${entry.id}',${i})">🗑️</button></div>`).join("")}
           </div>` : ""}
         ${!isCleared ? `
           <div class="pay-row">
@@ -2544,8 +2567,8 @@ function renderChargeRow(entry, c) {
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#8290a4;margin-bottom:2px">
           <span>${c.date}${c.description ? " · " + esc(c.description) : ""}</span>
           <span style="display:flex;gap:4px">
-            <button class="icon-btn" style="color:#1677ff;padding:2px" onclick="startEditCharge('${entry.id}','${c.id}')">✏️</button>
-            <button class="icon-btn" style="padding:2px" onclick="deleteCharge('${entry.id}','${c.id}')">🗑️</button>
+            <button class="icon-btn" style="color:#1677ff" onclick="startEditCharge('${entry.id}','${c.id}')">✏️</button>
+            <button class="icon-btn"  onclick="deleteCharge('${entry.id}','${c.id}')">🗑️</button>
           </span>
         </div>
         ${c.items.map((it) => `
@@ -2561,8 +2584,8 @@ function renderChargeRow(entry, c) {
       <span>${esc(c.description || "Charge")} <span style="color:#a3aebe;font-size:10.5px">${c.date}</span></span>
       <span class="isr-total">${fmt(c.amount)}</span>
       <span style="display:flex;gap:4px;margin-left:8px">
-        <button class="icon-btn" style="color:#1677ff;padding:2px" onclick="startEditCharge('${entry.id}','${c.id}')">✏️</button>
-        <button class="icon-btn" style="padding:2px" onclick="deleteCharge('${entry.id}','${c.id}')">🗑️</button>
+        <button class="icon-btn" style="color:#1677ff" onclick="startEditCharge('${entry.id}','${c.id}')">✏️</button>
+        <button class="icon-btn"  onclick="deleteCharge('${entry.id}','${c.id}')">🗑️</button>
       </span>
     </div>`;
 }
@@ -2759,7 +2782,7 @@ function renderMainStorePage() {
     <table class="recent-table" style="width:100%">
       <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
       <tbody>
-        ${STATE.stockItems.map((it) => `
+        ${[...STATE.stockItems].sort((a, b) => a.name.localeCompare(b.name)).map((it) => `
           <tr>
             <td style="padding:8px 6px">${esc(it.name)}</td>
             <td style="padding:8px 6px"><span class="badge pending">${esc(it.category)}</span></td>
@@ -2782,10 +2805,25 @@ function renderMainStorePage() {
   ${dispatchOpen ? renderDispatchForm() : ""}
 
   <div class="panel" style="margin-top:16px">
-    <h3>Recent Stock Movements</h3>
-    ${STATE.stockMovements.length === 0 ? `<p class="empty-note">No movements yet.</p>` : `
+    <h3>📥 All Received (${STATE.stockMovements.filter((m) => m.type === "in").length})</h3>
+    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "in"))}
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h3>📤 All Dispatched (${STATE.stockMovements.filter((m) => m.type === "out").length})</h3>
+    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "out"))}
+  </div>`;
+}
+function renderMovementsTable(list) {
+  if (list.length === 0) return `<p class="empty-note">Nothing here yet.</p>`;
+  const sorted = [...list].sort((a, b) => {
+    const an = (STATE.stockItems.find((it) => it.id === a.itemId) || {}).name || "";
+    const bn = (STATE.stockItems.find((it) => it.id === b.itemId) || {}).name || "";
+    return an.localeCompare(bn);
+  });
+  return `
     <table class="recent-table"><tbody>
-      ${[...STATE.stockMovements].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 20).map((m) => {
+      ${sorted.map((m) => {
         const item = STATE.stockItems.find((it) => it.id === m.itemId);
         const isEditing = UI.editingMovementId === m.id;
         if (isEditing) {
@@ -2808,7 +2846,6 @@ function renderMainStorePage() {
         }
         return `<tr>
           <td>${item ? esc(item.name) : "—"}</td>
-          <td><span class="badge ${m.type === "in" ? "paid" : "pending"}">${m.type === "in" ? "Received" : "Dispatched"}</span></td>
           <td class="rt-amount">${m.qty}</td>
           <td>${m.type === "in" ? esc(m.supplier || "") : esc(m.destination || "")}</td>
           <td class="rt-date">${m.date}</td>
@@ -2818,8 +2855,7 @@ function renderMainStorePage() {
           </td>
         </tr>`;
       }).join("")}
-    </tbody></table>`}
-  </div>`;
+    </tbody></table>`;
 }
 function saveMovementEdit(id) {
   const m = STATE.stockMovements.find((x) => x.id === id);
