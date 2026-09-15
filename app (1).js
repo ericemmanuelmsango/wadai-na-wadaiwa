@@ -64,6 +64,8 @@ let UI = {
   plFrom: "",
   plTo: "",
   editingMovementId: null,
+  stockDateFilter: "",
+  dispatchDateFilter: "",
   logoMsg: null,
 };
 let notifiedKeys = new Set();
@@ -2771,15 +2773,18 @@ function renderMainStorePage() {
   </div>` : ""}
 
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${receiveOpen || dispatchOpen ? "0" : "10px"}">
-      <h3 style="margin:0">📥📤 Receive / Dispatch Stock</h3>
-      ${!receiveOpen && !dispatchOpen ? `
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-sm btn-primary" onclick="startReceiveStock()">📥 Receive Stock</button>
-        <button class="btn btn-sm btn-primary" onclick="startDispatchStock()">📤 Dispatch Stock</button>
-      </div>` : ""}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${receiveOpen ? "0" : "10px"}">
+      <h3 style="margin:0">📥 Receive Stock</h3>
+      ${!receiveOpen ? `<button class="btn btn-sm btn-primary" onclick="startReceiveStock()">📥 Receive Stock</button>` : ""}
     </div>
     ${receiveOpen ? renderReceiveForm() : ""}
+  </div>
+
+  <div class="panel" style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${dispatchOpen ? "0" : "10px"}">
+      <h3 style="margin:0">📤 Dispatch Stock</h3>
+      ${!dispatchOpen ? `<button class="btn btn-sm btn-primary" onclick="startDispatchStock()">📤 Dispatch Stock</button>` : ""}
+    </div>
     ${dispatchOpen ? renderDispatchForm() : ""}
   </div>
 
@@ -2810,12 +2815,22 @@ function renderMainStorePage() {
 
   <div class="panel" style="margin-top:16px">
     <h3>📥 All Received (${STATE.stockMovements.filter((m) => m.type === "in").length})</h3>
-    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "in"))}
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <label style="font-size:12px;color:#6b7280">📅 Filter by date:</label>
+      <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.stockDateFilter || "")}" onchange="UI.stockDateFilter=this.value;rerender();">
+      ${UI.stockDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.stockDateFilter='';rerender();">Clear</button>` : ""}
+    </div>
+    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "in" && (!UI.stockDateFilter || m.date === UI.stockDateFilter)))}
   </div>
 
   <div class="panel" style="margin-top:16px">
     <h3>📤 All Dispatched (${STATE.stockMovements.filter((m) => m.type === "out").length})</h3>
-    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "out"))}
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <label style="font-size:12px;color:#6b7280">📅 Filter by date:</label>
+      <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.dispatchDateFilter || "")}" onchange="UI.dispatchDateFilter=this.value;rerender();">
+      ${UI.dispatchDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.dispatchDateFilter='';rerender();">Clear</button>` : ""}
+    </div>
+    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "out" && (!UI.dispatchDateFilter || m.date === UI.dispatchDateFilter)))}
   </div>`;
 }
 function renderMovementsTable(list) {
