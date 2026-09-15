@@ -66,6 +66,12 @@ let UI = {
   editingMovementId: null,
   stockDateFilter: "",
   dispatchDateFilter: "",
+  stockSearch: "",
+  receivedSearch: "",
+  dispatchSearch: "",
+  openStockCategories: {},
+  openReceivedMonths: {},
+  openDispatchMonths: {},
   logoMsg: null,
 };
 let notifiedKeys = new Set();
@@ -2760,6 +2766,47 @@ function lowStockCount() {
   return STATE.stockItems.filter((it) => isLowStock(it)).length;
 }
 
+function renderStockByCategory() {
+  const search = (UI.stockSearch || "").trim().toLowerCase();
+  const items = STATE.stockItems.filter((it) => !search || it.name.toLowerCase().includes(search));
+  const groups = {};
+  items.forEach((it) => { (groups[it.category] = groups[it.category] || []).push(it); });
+  const cats = Object.keys(groups).sort();
+  if (cats.length === 0) return `<p class="empty-note">No items match "${esc(UI.stockSearch)}".</p>`;
+  const forceOpen = !!search;
+  return cats.map((cat) => {
+    const list = groups[cat].sort((a, b) => a.name.localeCompare(b.name));
+    const isOpen = forceOpen || UI.openStockCategories[cat];
+    return `
+    <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">
+      <button class="history-toggle" style="width:100%;justify-content:space-between;padding:10px 12px;margin:0" onclick="UI.openStockCategories['${cat}']=!UI.openStockCategories['${cat}'];rerender();">
+        <span>📁 ${esc(cat)} (${list.length})</span>
+        <span>${isOpen ? "▲" : "▼"}</span>
+      </button>
+      ${isOpen ? `
+      <table class="recent-table" style="width:100%">
+        <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
+        <tbody>
+          ${list.map((it) => `
+            <tr>
+              <td style="padding:8px 6px">${esc(it.name)}</td>
+              <td style="padding:8px 6px;text-align:right;font-weight:700;${isLowStock(it) ? "color:#dc2636" : ""}">${qtyOf(it.id)}</td>
+              <td style="padding:8px 6px;text-align:right">
+                ${UI.editingLimitId === it.id ? `
+                  <input id="limit-${it.id}" class="field field-sm" style="width:70px;display:inline-block" type="text" inputmode="numeric" value="${esc(it.lowStockLimit ?? "")}" oninput="this.value=sanitizeNum(this.value)">
+                  <button class="btn btn-sm btn-primary" onclick="saveLimit('${it.id}')">Save</button>
+                ` : `
+                  ${it.lowStockLimit ?? "—"} <button class="icon-btn" onclick="UI.editingLimitId='${it.id}';rerender();">✏️</button>
+                `}
+              </td>
+              <td style="padding:8px 6px">${isLowStock(it) ? `<span class="badge pending">Low Stock</span>` : `<span class="badge paid">OK</span>`}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>` : ""}
+    </div>`;
+  }).join("");
+}
+
 function renderMainStorePage() {
   const receiveOpen = UI.stockForm !== null;
   const dispatchOpen = UI.dispatchForm !== null;
@@ -2790,48 +2837,55 @@ function renderMainStorePage() {
 
   <div class="panel" style="margin-top:16px">
     <h3 style="margin:0 0 10px">Current Stock</h3>
-    ${STATE.stockItems.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : `
-    <table class="recent-table" style="width:100%">
-      <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
-      <tbody>
-        ${[...STATE.stockItems].sort((a, b) => a.name.localeCompare(b.name)).map((it) => `
-          <tr>
-            <td style="padding:8px 6px">${esc(it.name)}</td>
-            <td style="padding:8px 6px"><span class="badge pending">${esc(it.category)}</span></td>
-            <td style="padding:8px 6px;text-align:right;font-weight:700;${isLowStock(it) ? "color:#dc2636" : ""}">${qtyOf(it.id)}</td>
-            <td style="padding:8px 6px;text-align:right">
-              ${UI.editingLimitId === it.id ? `
-                <input id="limit-${it.id}" class="field field-sm" style="width:70px;display:inline-block" type="text" inputmode="numeric" value="${esc(it.lowStockLimit ?? "")}" oninput="this.value=sanitizeNum(this.value)">
-                <button class="btn btn-sm btn-primary" onclick="saveLimit('${it.id}')">Save</button>
-              ` : `
-                ${it.lowStockLimit ?? "—"} <button class="icon-btn" onclick="UI.editingLimitId='${it.id}';rerender();">✏️</button>
-              `}
-            </td>
-            <td style="padding:8px 6px">${isLowStock(it) ? `<span class="badge pending">Low Stock</span>` : `<span class="badge paid">OK</span>`}</td>
-          </tr>`).join("")}
-      </tbody>
-    </table>`}
+    <input class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search item..." value="${esc(UI.stockSearch || "")}" oninput="UI.stockSearch=this.value;rerender();">
+    ${STATE.stockItems.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : renderStockByCategory()}
   </div>
 
   <div class="panel" style="margin-top:16px">
     <h3>📥 All Received (${STATE.stockMovements.filter((m) => m.type === "in").length})</h3>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <label style="font-size:12px;color:#6b7280">📅 Filter by date:</label>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <input class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.receivedSearch || "")}" oninput="UI.receivedSearch=this.value;rerender();">
+      <label style="font-size:12px;color:#6b7280">📅 Date:</label>
       <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.stockDateFilter || "")}" onchange="UI.stockDateFilter=this.value;rerender();">
       ${UI.stockDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.stockDateFilter='';rerender();">Clear</button>` : ""}
     </div>
-    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "in" && (!UI.stockDateFilter || m.date === UI.stockDateFilter)))}
+    ${renderMovementsByMonth(STATE.stockMovements.filter((m) => m.type === "in" && (!UI.stockDateFilter || m.date === UI.stockDateFilter)), UI.receivedSearch, "openReceivedMonths")}
   </div>
 
   <div class="panel" style="margin-top:16px">
     <h3>📤 All Dispatched (${STATE.stockMovements.filter((m) => m.type === "out").length})</h3>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <label style="font-size:12px;color:#6b7280">📅 Filter by date:</label>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <input class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.dispatchSearch || "")}" oninput="UI.dispatchSearch=this.value;rerender();">
+      <label style="font-size:12px;color:#6b7280">📅 Date:</label>
       <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.dispatchDateFilter || "")}" onchange="UI.dispatchDateFilter=this.value;rerender();">
       ${UI.dispatchDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.dispatchDateFilter='';rerender();">Clear</button>` : ""}
     </div>
-    ${renderMovementsTable(STATE.stockMovements.filter((m) => m.type === "out" && (!UI.dispatchDateFilter || m.date === UI.dispatchDateFilter)))}
+    ${renderMovementsByMonth(STATE.stockMovements.filter((m) => m.type === "out" && (!UI.dispatchDateFilter || m.date === UI.dispatchDateFilter)), UI.dispatchSearch, "openDispatchMonths")}
   </div>`;
+}
+function renderMovementsByMonth(list, search, openKey) {
+  const s = (search || "").trim().toLowerCase();
+  const filtered = list.filter((m) => {
+    if (!s) return true;
+    const item = STATE.stockItems.find((it) => it.id === m.itemId);
+    return item && item.name.toLowerCase().includes(s);
+  });
+  if (filtered.length === 0) return `<p class="empty-note">${s ? `No items match "${esc(search)}".` : "Nothing here yet."}</p>`;
+  const groups = {};
+  filtered.forEach((m) => { const mo = m.date.slice(0, 7); (groups[mo] = groups[mo] || []).push(m); });
+  const months = Object.keys(groups).sort((a, b) => (a < b ? 1 : -1));
+  const forceOpen = !!s;
+  return months.map((mo) => {
+    const isOpen = forceOpen || UI[openKey][mo];
+    return `
+    <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">
+      <button class="history-toggle" style="width:100%;justify-content:space-between;padding:10px 12px;margin:0" onclick="UI.${openKey}['${mo}']=!UI.${openKey}['${mo}'];rerender();">
+        <span>📁 ${mo} (${groups[mo].length})</span>
+        <span>${isOpen ? "▲" : "▼"}</span>
+      </button>
+      ${isOpen ? renderMovementsTable(groups[mo]) : ""}
+    </div>`;
+  }).join("");
 }
 function renderMovementsTable(list) {
   if (list.length === 0) return `<p class="empty-note">Nothing here yet.</p>`;
