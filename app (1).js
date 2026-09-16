@@ -56,6 +56,10 @@ let UI = {
   deliveryNoteId: null,
   editingLimitId: null,
   editingProductId: null,
+  editingCategoryId: null,
+  salesStore: "dukani",
+  editingSaleId: null,
+  editSaleForm: null,
   showProductTrash: false,
   showSalesReport: false,
   salesReportUnlocked: false,
@@ -316,7 +320,7 @@ function handleLogout() {
 
 function renderShell() {
   const active = STATE.entries.filter((e) => !e.archived);
-  const dueCount = active.filter((e) => dueStatus(e)).length + lowStockCount();
+  const dueCount = active.filter((e) => dueStatus(e)).length + lowStockCount("dukani") + lowStockCount("godown") + zeroStockCount("dukani") + zeroStockCount("godown");
 
   const titles = {
     dashboard: ["Dashboard", "Overview of all your debts"],
@@ -325,7 +329,8 @@ function renderShell() {
     reports: ["Reports", "Business performance over time"],
     alerts: ["Alerts", "Everything due today or overdue"],
     products: ["Products", "Items you sell, for faster order entry"],
-    mainstore: ["Main Store", "Stock received and dispatched"],
+    mainstore: ["Dukani", "Shop stock — receiving only"],
+    godown: ["Godown", "Warehouse stock — receive and dispatch"],
     sales: ["Sales", "Record what you sold today"],
     settings: ["Settings", "Manage your passwords"],
   };
@@ -336,7 +341,8 @@ function renderShell() {
     ["owed", "👤", "Debtors"],
     ["owe", "💼", "Creditors"],
     ["products", "📦", "Products"],
-    ["mainstore", "🏬", "Main Store"],
+    ["mainstore", "🏪", "Dukani"],
+    ["godown", "🏭", "Godown"],
     ["sales", "💰", "Sales"],
     ["reports", "📊", "Reports"],
     ["alerts", "🔔", "Alerts"],
@@ -410,7 +416,8 @@ function renderPage(page) {
   if (page === "reports") return guardFinancials(renderReports);
   if (page === "alerts") return renderAlerts();
   if (page === "products") return renderProductsPage();
-  if (page === "mainstore") return renderMainStorePage();
+  if (page === "mainstore") return renderMainStorePage("dukani");
+  if (page === "godown") return renderMainStorePage("godown");
   if (page === "sales") return renderSalesPage();
   if (page === "owed") return guardFinancials(() => renderColumnPage("owed_to_me"));
   if (page === "owe") return guardFinancials(() => renderColumnPage("i_owe"));
@@ -1980,11 +1987,19 @@ function renderAlerts() {
     ${dueToday.length === 0 ? `<p class="empty-note">Nothing due today.</p>` : dueToday.map(alertRow).join("")}
   </div>
   <div class="panel" style="margin-top:16px">
-    <h3>📦 Low Stock (${lowStockCount()})</h3>
-    ${lowStockCount() === 0 ? `<p class="empty-note">All stock levels are fine.</p>` : STATE.stockItems.filter((it) => isLowStock(it)).map((it) => `
+    <h3>📦 Low Stock (${lowStockCount("dukani") + lowStockCount("godown")})</h3>
+    ${(lowStockCount("dukani") + lowStockCount("godown")) === 0 ? `<p class="empty-note">All stock levels are fine.</p>` : STATE.stockItems.filter((it) => isLowStock(it) && !isZeroStock(it)).map((it) => `
       <div class="alert">
         <div class="alert-icon overdue">📦</div>
-        <div class="alert-body"><strong>${esc(it.name)} is running low</strong><small>Only ${qtyOf(it.id)} left (limit: ${it.lowStockLimit})</small></div>
+        <div class="alert-body"><strong>${esc(it.name)} is running low</strong><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"} · Only ${qtyOf(it.id)} left (limit: ${it.lowStockLimit})</small></div>
+      </div>`).join("")}
+  </div>
+  <div class="panel" style="margin-top:16px">
+    <h3>⛔ Zero Stock (${zeroStockCount("dukani") + zeroStockCount("godown")})</h3>
+    ${(zeroStockCount("dukani") + zeroStockCount("godown")) === 0 ? `<p class="empty-note">Nothing is out of stock.</p>` : STATE.stockItems.filter((it) => isZeroStock(it)).map((it) => `
+      <div class="alert">
+        <div class="alert-icon overdue">⛔</div>
+        <div class="alert-body"><strong>${esc(it.name)} is out of stock</strong><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"}</small></div>
       </div>`).join("")}
   </div>`;
 }
@@ -2012,7 +2027,7 @@ function avgBuyPrice(itemId) {
 }
 
 function startNewSale() {
-  UI.saleForm = { date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
+  UI.saleForm = { store: UI.salesStore || "dukani", customer: "", date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
   rerender();
 }
 function setSaleField(field, value) {
@@ -2038,18 +2053,31 @@ function removeSaleRow(rowId) {
   UI.saleForm.rows = UI.saleForm.rows.filter((r) => r.id !== rowId);
   rerender();
 }
+function setSalesStore(store) {
+  UI.salesStore = store;
+  if (UI.saleForm) UI.saleForm.store = store;
+  rerender();
+}
 
 function renderSalesPage() {
-  if (!UI.saleForm) UI.saleForm = { date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
+  if (!UI.salesStore) UI.salesStore = "dukani";
+  if (!UI.saleForm) UI.saleForm = { store: UI.salesStore, customer: "", date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
   const f = UI.saleForm;
   const grandTotal = f.rows.reduce((s, r) => s + (Number(r.price) || 0) * (Number(r.qty) || 0), 0);
+  const salesInStore = STATE.sales.filter((s) => (s.store || "dukani") === UI.salesStore);
   const salesByDay = {};
-  STATE.sales.forEach((s) => { (salesByDay[s.date] = salesByDay[s.date] || []).push(s); });
+  salesInStore.forEach((s) => { (salesByDay[s.date] = salesByDay[s.date] || []).push(s); });
   const days = Object.keys(salesByDay).sort((a, b) => (a < b ? 1 : -1));
 
   return `
-  <div class="panel">
-    <h3>➕ Record a Sale</h3>
+  <div class="mode-toggle" style="max-width:320px">
+    <button class="mode-btn ${UI.salesStore === "dukani" ? "active" : ""}" onclick="setSalesStore('dukani')">🏪 Dukani</button>
+    <button class="mode-btn ${UI.salesStore === "godown" ? "active" : ""}" onclick="setSalesStore('godown')">🏭 Godown</button>
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <h3>➕ Record a Sale — ${UI.salesStore === "godown" ? "Godown" : "Dukani"}</h3>
+    <input id="sl-customer" class="field" placeholder="Customer name (optional)" value="${esc(f.customer)}" oninput="setSaleField('customer',this.value)">
     <label class="due-label">📅 Date of sale</label>
     <input id="sl-date" class="field" type="date" value="${esc(f.date)}" oninput="setSaleField('date',this.value)">
     <div class="items-block" style="margin-top:10px">
@@ -2057,7 +2085,7 @@ function renderSalesPage() {
         <span>Item</span><span>Price</span><span>Qty</span><span>Total</span><span></span>
       </div>
       ${f.rows.map((r) => {
-        const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase());
+        const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
         const available = stockItem ? qtyOf(stockItem.id) : null;
         const lineTotal = (Number(r.price) || 0) * (Number(r.qty) || 0);
         return `
@@ -2069,7 +2097,7 @@ function renderSalesPage() {
           ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeSaleRow('${r.id}')">🗑️</button>` : `<span></span>`}
         </div>
         ${r.itemName.trim() ? `<div style="font-size:10.5px;color:${available == null ? "#dc2636" : "#8290a4"};margin:-4px 0 6px 2px">
-          ${available == null ? "⚠️ Not found in Main Store stock" : `${available} currently in stock`}
+          ${available == null ? `⚠️ Not found in ${UI.salesStore === "godown" ? "Godown" : "Dukani"} stock` : `${available} currently in stock`}
         </div>` : ""}`;
       }).join("")}
       <button class="add-row-btn" onclick="addSaleRow()">＋ Add Item</button>
@@ -2080,7 +2108,7 @@ function renderSalesPage() {
   </div>
 
   <div class="panel" style="margin-top:16px">
-    <h3>Sales by Day</h3>
+    <h3>Sales by Day — ${UI.salesStore === "godown" ? "Godown" : "Dukani"}</h3>
     ${days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : days.map((day) => {
       const list = salesByDay[day];
       const dayTotal = list.reduce((s, x) => s + x.total, 0);
@@ -2091,17 +2119,65 @@ function renderSalesPage() {
           <span style="font-size:12.5px;font-weight:700;color:var(--green)">${fmt(dayTotal)}</span>
         </div>
         <table class="recent-table"><tbody>
-          ${list.map((s) => `
-            <tr>
-              <td>${esc(s.itemName)}</td>
-              <td>${s.qty} × ${fmt(s.sellPrice)}</td>
-              <td class="rt-amount">${fmt(s.total)}</td>
-              <td><button class="icon-btn" onclick="deleteSale('${s.id}')">🗑️</button></td>
-            </tr>`).join("")}
+          ${list.map((s) => renderSaleRow(s)).join("")}
         </tbody></table>
       </div>`;
     }).join("")}
   </div>`;
+}
+function renderSaleRow(s) {
+  if (UI.editingSaleId === s.id) {
+    const f = UI.editSaleForm;
+    return `<tr><td colspan="4">
+      <div class="entry-form" style="margin:6px 0">
+        <input id="es-customer" class="field field-sm" placeholder="Customer name" value="${esc(f.customer)}" oninput="UI.editSaleForm.customer=this.value">
+        <input id="es-item" class="field field-sm" placeholder="Item" value="${esc(f.itemName)}" oninput="UI.editSaleForm.itemName=this.value">
+        <input id="es-price" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${esc(f.sellPrice)}" oninput="this.value=sanitizeNum(this.value);UI.editSaleForm.sellPrice=this.value">
+        <input id="es-qty" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(f.qty)}" oninput="this.value=sanitizeNum(this.value);UI.editSaleForm.qty=this.value">
+        <div class="form-actions">
+          <button class="btn btn-ghost btn-sm" onclick="UI.editingSaleId=null;rerender();">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="saveEditedSale('${s.id}')">Save</button>
+        </div>
+      </div>
+    </td></tr>`;
+  }
+  return `
+    <tr>
+      <td>${esc(s.itemName)}${s.customer ? ` <span style="color:#8290a4;font-size:11px">· ${esc(s.customer)}</span>` : ""}</td>
+      <td>${s.qty} × ${fmt(s.sellPrice)}</td>
+      <td class="rt-amount">${fmt(s.total)}</td>
+      <td style="white-space:nowrap">
+        <button class="icon-btn" style="color:#1677ff" onclick="startEditSale('${s.id}')">✏️</button>
+        <button class="icon-btn" onclick="deleteSale('${s.id}')">🗑️</button>
+      </td>
+    </tr>`;
+}
+function startEditSale(id) {
+  const s = STATE.sales.find((x) => x.id === id);
+  if (!s) return;
+  UI.editingSaleId = id;
+  UI.editSaleForm = { customer: s.customer || "", itemName: s.itemName, sellPrice: String(s.sellPrice), qty: String(s.qty) };
+  rerender();
+}
+function saveEditedSale(id) {
+  const f = UI.editSaleForm;
+  const newQty = Number(f.qty);
+  const newPrice = Number(f.sellPrice);
+  if (!newQty || newQty <= 0 || !newPrice || newPrice <= 0) return;
+  const sale = STATE.sales.find((s) => s.id === id);
+  if (!sale) return;
+  const item = STATE.stockItems.find((it) => it.id === sale.itemId);
+  if (item) {
+    const otherUsed = STATE.stockMovements.filter((m) => m.itemId === item.id && m.id !== sale.movementId)
+      .reduce((s2, m) => s2 + (m.type === "in" ? m.qty : -m.qty), 0);
+    if (newQty > otherUsed) { UI.saleMsg = { ok: false, text: `Not enough stock — only ${otherUsed} available.` }; return rerender(); }
+  }
+  STATE.stockMovements = STATE.stockMovements.map((m) => (m.id === sale.movementId ? { ...m, qty: newQty } : m));
+  STATE.sales = STATE.sales.map((s) => (s.id === id ? { ...s, customer: f.customer.trim(), itemName: f.itemName.trim(), sellPrice: newPrice, qty: newQty, total: newPrice * newQty } : s));
+  saveStockMovements();
+  saveSales();
+  UI.editingSaleId = null;
+  rerender();
 }
 function submitSale() {
   const f = UI.saleForm;
@@ -2110,14 +2186,14 @@ function submitSale() {
   if (validRows.length === 0) { UI.saleMsg = { ok: false, text: "Add at least one item with a price and quantity." }; return rerender(); }
 
   for (const r of validRows) {
-    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase());
-    if (!stockItem) { UI.saleMsg = { ok: false, text: `"${r.itemName}" was not found in Main Store stock.` }; return rerender(); }
+    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
+    if (!stockItem) { UI.saleMsg = { ok: false, text: `"${r.itemName}" was not found in ${f.store === "godown" ? "Godown" : "Dukani"} stock.` }; return rerender(); }
     const available = qtyOf(stockItem.id);
     if (Number(r.qty) > available) { UI.saleMsg = { ok: false, text: `Only ${available} of "${r.itemName}" in stock.` }; return rerender(); }
   }
 
   validRows.forEach((r) => {
-    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase());
+    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
     const qty = Number(r.qty);
     const price = Number(r.price);
     const buyPrice = avgBuyPrice(stockItem.id);
@@ -2125,7 +2201,7 @@ function submitSale() {
     STATE.stockMovements.push({ id: movementId, itemId: stockItem.id, type: "out", qty, destination: "Sale", date: f.date });
     STATE.sales.push({
       id: uid(), itemId: stockItem.id, itemName: stockItem.name, sellPrice: price, qty,
-      total: price * qty, buyPrice, date: f.date || todayStr(), movementId,
+      total: price * qty, buyPrice, date: f.date || todayStr(), movementId, store: f.store, customer: f.customer.trim(),
     });
   });
   saveStockMovements();
@@ -2146,6 +2222,7 @@ function deleteSale(id) {
   saveSales();
   rerender();
 }
+
 
 /* ---------- REPORTS ---------- */
 function renderReports() {
@@ -2752,7 +2829,14 @@ function deleteCharge(entryId, chargeId) {
 }
 
 /* ---------- MAIN STORE ---------- */
-const STOCK_CATEGORIES = ["Sinoray", "Kinglion", "Bicycle", "Normal", "Sali Limited", "Other"];
+const STOCK_CATEGORIES = ["Sinoray", "Kinglion", "Sino", "Bicycle", "Normal", "Sali Limited", "Other"];
+function guessCategory(name) {
+  const n = name.toLowerCase();
+  if (n.includes("sinoray")) return "Sinoray";
+  if (n.includes("kinglion") || n.includes("king")) return "Kinglion";
+  if (n.includes("sino")) return "Sino";
+  return "Normal";
+}
 
 function qtyOf(itemId) {
   return STATE.stockMovements
@@ -2762,8 +2846,17 @@ function qtyOf(itemId) {
 function isLowStock(item) {
   return item.lowStockLimit != null && item.lowStockLimit !== "" && qtyOf(item.id) <= Number(item.lowStockLimit);
 }
-function lowStockCount() {
-  return STATE.stockItems.filter((it) => isLowStock(it)).length;
+function isZeroStock(item) { return qtyOf(item.id) <= 0; }
+function storeItems(store) { return STATE.stockItems.filter((it) => (it.store || "dukani") === store); }
+function storeMovements(store) {
+  const ids = new Set(storeItems(store).map((it) => it.id));
+  return STATE.stockMovements.filter((m) => ids.has(m.itemId));
+}
+function lowStockCount(store) {
+  return storeItems(store).filter((it) => isLowStock(it) && !isZeroStock(it)).length;
+}
+function zeroStockCount(store) {
+  return storeItems(store).filter((it) => isZeroStock(it)).length;
 }
 
 function renderStockByCategory() {
@@ -2807,62 +2900,158 @@ function renderStockByCategory() {
   }).join("");
 }
 
-function renderMainStorePage() {
-  const receiveOpen = UI.stockForm !== null;
-  const dispatchOpen = UI.dispatchForm !== null;
+function renderMainStorePage(store) {
+  const label = store === "godown" ? "Godown" : "Dukani";
+  const receiveOpen = UI.stockForm !== null && UI.stockForm.store === store;
+  const dispatchOpen = UI.dispatchForm !== null && UI.dispatchForm.store === store;
+  const items = storeItems(store);
+  const lowItems = items.filter((it) => isLowStock(it) && !isZeroStock(it));
+  const zeroItems = items.filter((it) => isZeroStock(it));
   return `
-  ${lowStockCount() > 0 ? `
+  ${lowItems.length > 0 ? `
   <div class="reminder-bar">
-    <div class="reminder-title">⚠️ Low Stock</div>
+    <div class="reminder-title">⚠️ Low Stock — ${label}</div>
     <div class="reminder-group">
-      ${STATE.stockItems.filter((it) => isLowStock(it)).map((it) => `<span class="reminder-chip overdue">${esc(it.name)} — ${qtyOf(it.id)} left</span>`).join("")}
+      ${lowItems.map((it) => `<span class="reminder-chip overdue">${esc(it.name)} — ${qtyOf(it.id)} left</span>`).join("")}
+    </div>
+  </div>` : ""}
+  ${zeroItems.length > 0 ? `
+  <div class="reminder-bar" style="background:#ffe0e3;border-color:var(--rust)">
+    <div class="reminder-title" style="color:var(--rust)">⛔ Zero Stock — ${label} (${zeroItems.length})</div>
+    <div class="reminder-group">
+      ${zeroItems.map((it) => `<span class="reminder-chip overdue">${esc(it.name)}</span>`).join("")}
     </div>
   </div>` : ""}
 
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${receiveOpen ? "0" : "10px"}">
-      <h3 style="margin:0">📥 Receive Stock</h3>
-      ${!receiveOpen ? `<button class="btn btn-sm btn-primary" onclick="startReceiveStock()">📥 Receive Stock</button>` : ""}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${receiveOpen ? "0" : "10px"};flex-wrap:wrap;gap:8px">
+      <h3 style="margin:0">📥 Receive Stock — ${label}</h3>
+      ${!receiveOpen ? `<div style="display:flex;gap:8px">
+        <button class="btn btn-sm btn-primary" onclick="startReceiveStock('${store}')">📥 Receive Stock</button>
+        <button class="btn btn-sm btn-ghost" onclick="seedAllProducts('${store}')">🌱 Stock All Products (100 each)</button>
+      </div>` : ""}
     </div>
     ${receiveOpen ? renderReceiveForm() : ""}
   </div>
 
+  ${store === "godown" ? `
   <div class="panel" style="margin-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${dispatchOpen ? "0" : "10px"}">
-      <h3 style="margin:0">📤 Dispatch Stock</h3>
-      ${!dispatchOpen ? `<button class="btn btn-sm btn-primary" onclick="startDispatchStock()">📤 Dispatch Stock</button>` : ""}
+      <h3 style="margin:0">📤 Dispatch Stock — Godown</h3>
+      ${!dispatchOpen ? `<button class="btn btn-sm btn-primary" onclick="startDispatchStock('godown')">📤 Dispatch Stock</button>` : ""}
     </div>
     ${dispatchOpen ? renderDispatchForm() : ""}
+  </div>` : ""}
+
+  <div class="panel" style="margin-top:16px">
+    <h3 style="margin:0 0 10px">Current Stock — ${label}</h3>
+    <input id="stock-search-input-${store}" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search item..." value="${esc(UI.stockSearch || "")}" oninput="UI.stockSearch=this.value;rerender();">
+    ${items.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : renderStockByCategory(store)}
   </div>
 
   <div class="panel" style="margin-top:16px">
-    <h3 style="margin:0 0 10px">Current Stock</h3>
-    <input class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search item..." value="${esc(UI.stockSearch || "")}" oninput="UI.stockSearch=this.value;rerender();">
-    ${STATE.stockItems.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : renderStockByCategory()}
-  </div>
-
-  <div class="panel" style="margin-top:16px">
-    <h3>📥 All Received (${STATE.stockMovements.filter((m) => m.type === "in").length})</h3>
+    <h3>📥 All Received — ${label} (${storeMovements(store).filter((m) => m.type === "in").length})</h3>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <input class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.receivedSearch || "")}" oninput="UI.receivedSearch=this.value;rerender();">
+      <input id="received-search-input-${store}" class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.receivedSearch || "")}" oninput="UI.receivedSearch=this.value;rerender();">
       <label style="font-size:12px;color:#6b7280">📅 Date:</label>
       <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.stockDateFilter || "")}" onchange="UI.stockDateFilter=this.value;rerender();">
       ${UI.stockDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.stockDateFilter='';rerender();">Clear</button>` : ""}
     </div>
-    ${renderMovementsByMonth(STATE.stockMovements.filter((m) => m.type === "in" && (!UI.stockDateFilter || m.date === UI.stockDateFilter)), UI.receivedSearch, "openReceivedMonths")}
+    ${renderMovementsByMonth(storeMovements(store).filter((m) => m.type === "in" && (!UI.stockDateFilter || m.date === UI.stockDateFilter)), UI.receivedSearch, "openReceivedMonths" + store)}
   </div>
 
+  ${store === "godown" ? `
   <div class="panel" style="margin-top:16px">
-    <h3>📤 All Dispatched (${STATE.stockMovements.filter((m) => m.type === "out").length})</h3>
+    <h3>📤 All Dispatched — Godown (${storeMovements(store).filter((m) => m.type === "out").length})</h3>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <input class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.dispatchSearch || "")}" oninput="UI.dispatchSearch=this.value;rerender();">
+      <input id="dispatch-search-input-${store}" class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.dispatchSearch || "")}" oninput="UI.dispatchSearch=this.value;rerender();">
       <label style="font-size:12px;color:#6b7280">📅 Date:</label>
       <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.dispatchDateFilter || "")}" onchange="UI.dispatchDateFilter=this.value;rerender();">
       ${UI.dispatchDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.dispatchDateFilter='';rerender();">Clear</button>` : ""}
     </div>
-    ${renderMovementsByMonth(STATE.stockMovements.filter((m) => m.type === "out" && (!UI.dispatchDateFilter || m.date === UI.dispatchDateFilter)), UI.dispatchSearch, "openDispatchMonths")}
-  </div>`;
+    ${renderMovementsByMonth(storeMovements(store).filter((m) => m.type === "out" && (!UI.dispatchDateFilter || m.date === UI.dispatchDateFilter)), UI.dispatchSearch, "openDispatchMonths" + store)}
+  </div>` : ""}`;
 }
+
+function seedAllProducts(store) {
+  const existingNames = new Set(storeItems(store).map((it) => it.name.toLowerCase()));
+  let added = 0;
+  STATE.products.filter((p) => !p.deleted).forEach((p) => {
+    if (existingNames.has(p.name.toLowerCase())) return;
+    const item = { id: uid(), name: p.name, category: guessCategory(p.name), lowStockLimit: "50", store };
+    STATE.stockItems.push(item);
+    STATE.stockMovements.push({ id: uid(), itemId: item.id, type: "in", qty: 100, supplier: "", date: todayStr(), price: p.price || null });
+    existingNames.add(p.name.toLowerCase());
+    added++;
+  });
+  saveStockItems();
+  saveStockMovements();
+  UI.err = null;
+  alert(`Stocked ${added} new product(s) into ${store === "godown" ? "Godown" : "Dukani"} (100 each).`);
+  rerender();
+}
+
+function renderStockByCategory(store) {
+  const search = (UI.stockSearch || "").trim().toLowerCase();
+  const items = storeItems(store).filter((it) => !search || it.name.toLowerCase().includes(search));
+  const groups = {};
+  items.forEach((it) => { (groups[it.category] = groups[it.category] || []).push(it); });
+  const cats = Object.keys(groups).sort();
+  if (cats.length === 0) return `<p class="empty-note">No items match "${esc(UI.stockSearch)}".</p>`;
+  const forceOpen = !!search;
+  const openKey = "openStockCategories" + store;
+  if (!UI[openKey]) UI[openKey] = {};
+  return cats.map((cat) => {
+    const list = groups[cat].sort((a, b) => a.name.localeCompare(b.name));
+    const isOpen = forceOpen || UI[openKey][cat];
+    return `
+    <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">
+      <button class="history-toggle" style="width:100%;justify-content:space-between;padding:10px 12px;margin:0" onclick="UI.${openKey}['${cat}']=!UI.${openKey}['${cat}'];rerender();">
+        <span>📁 ${esc(cat)} (${list.length})</span>
+        <span>${isOpen ? "▲" : "▼"}</span>
+      </button>
+      ${isOpen ? `
+      <table class="recent-table" style="width:100%">
+        <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
+        <tbody>
+          ${list.map((it) => `
+            <tr>
+              <td style="padding:8px 6px">${esc(it.name)}</td>
+              <td style="padding:8px 6px">
+                ${UI.editingCategoryId === it.id ? `
+                  <select id="cat-${it.id}" class="field field-sm" style="width:auto;display:inline-block">
+                    ${STOCK_CATEGORIES.map((c) => `<option value="${c}" ${it.category === c ? "selected" : ""}>${c}</option>`).join("")}
+                  </select>
+                  <button class="btn btn-sm btn-primary" onclick="saveCategory('${it.id}')">Save</button>
+                ` : `
+                  <span class="badge pending">${esc(it.category)}</span> <button class="icon-btn" style="color:#1677ff" onclick="UI.editingCategoryId='${it.id}';rerender();">✏️</button>
+                `}
+              </td>
+              <td style="padding:8px 6px;text-align:right;font-weight:700;${isZeroStock(it) ? "color:#dc2636" : isLowStock(it) ? "color:#b8862f" : ""}">${qtyOf(it.id)}</td>
+              <td style="padding:8px 6px;text-align:right">
+                ${UI.editingLimitId === it.id ? `
+                  <input id="limit-${it.id}" class="field field-sm" style="width:70px;display:inline-block" type="text" inputmode="numeric" value="${esc(it.lowStockLimit ?? "")}" oninput="this.value=sanitizeNum(this.value)">
+                  <button class="btn btn-sm btn-primary" onclick="saveLimit('${it.id}')">Save</button>
+                ` : `
+                  ${it.lowStockLimit ?? "—"} <button class="icon-btn" onclick="UI.editingLimitId='${it.id}';rerender();">✏️</button>
+                `}
+              </td>
+              <td style="padding:8px 6px">${isZeroStock(it) ? `<span class="badge" style="background:#ffe0e3;color:#dc2636">Zero</span>` : isLowStock(it) ? `<span class="badge pending">Low Stock</span>` : `<span class="badge paid">OK</span>`}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function saveCategory(itemId) {
+  const val = document.getElementById("cat-" + itemId).value;
+  STATE.stockItems = STATE.stockItems.map((it) => (it.id === itemId ? { ...it, category: val } : it));
+  saveStockItems();
+  UI.editingCategoryId = null;
+  rerender();
+}
+
 function renderMovementsByMonth(list, search, openKey) {
   const s = (search || "").trim().toLowerCase();
   const filtered = list.filter((m) => {
@@ -2875,6 +3064,7 @@ function renderMovementsByMonth(list, search, openKey) {
   filtered.forEach((m) => { const mo = m.date.slice(0, 7); (groups[mo] = groups[mo] || []).push(m); });
   const months = Object.keys(groups).sort((a, b) => (a < b ? 1 : -1));
   const forceOpen = !!s;
+  if (!UI[openKey]) UI[openKey] = {};
   return months.map((mo) => {
     const isOpen = forceOpen || UI[openKey][mo];
     return `
@@ -2908,6 +3098,7 @@ function renderMovementsTable(list) {
                 <input id="em-price-${m.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${m.price != null ? m.price : ""}" oninput="this.value=sanitizeNum(this.value)">
               ` : `
                 <input id="em-dest-${m.id}" class="field field-sm" placeholder="Going to" value="${esc(m.destination || "")}">
+                <input id="em-oprice-${m.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${m.price != null ? m.price : ""}" oninput="this.value=sanitizeNum(this.value)">
               `}
               <input id="em-date-${m.id}" class="field field-sm" type="date" value="${m.date}">
               <div class="form-actions">
@@ -2920,7 +3111,7 @@ function renderMovementsTable(list) {
         return `<tr>
           <td>${item ? esc(item.name) : "—"}</td>
           <td class="rt-amount">${m.qty}</td>
-          <td>${m.type === "in" ? esc(m.supplier || "") : esc(m.destination || "")}</td>
+          <td>${m.type === "in" ? esc(m.supplier || "") : esc(m.destination || "")}${m.type === "out" && m.price != null ? ` · ${fmt(m.price)}` : ""}</td>
           <td class="rt-date">${m.date}</td>
           <td style="white-space:nowrap">
             <button class="icon-btn" style="color:#1677ff" onclick="UI.editingMovementId='${m.id}';rerender();">✏️</button>
@@ -2942,6 +3133,8 @@ function saveMovementEdit(id) {
     updated.price = priceVal ? Number(priceVal) : null;
   } else {
     updated.destination = document.getElementById("em-dest-" + id).value.trim();
+    const priceVal2 = document.getElementById("em-oprice-" + id).value;
+    updated.price = priceVal2 ? Number(priceVal2) : null;
   }
   STATE.stockMovements = STATE.stockMovements.map((x) => (x.id === id ? updated : x));
   saveStockMovements();
@@ -2955,15 +3148,14 @@ function deleteMovement(id) {
   rerender();
 }
 
-function startReceiveStock() {
-  UI.stockForm = { name: "", category: STOCK_CATEGORIES[0], qty: "", supplier: "", date: todayStr(), price: "", lowStockLimit: "" };
+function startReceiveStock(store) {
+  UI.stockForm = { store, name: "", category: STOCK_CATEGORIES[0], qty: "", supplier: "", date: todayStr(), price: "", lowStockLimit: "" };
   rerender();
 }
 function renderReceiveForm() {
   const f = UI.stockForm;
   return `
   <div class="entry-form" style="margin-top:12px">
-    <h3 style="margin-bottom:4px">📥 Receive Stock</h3>
     <input list="product-datalist" id="rs-name" class="field" placeholder="Item name" value="${esc(f.name)}" oninput="setStockField('name',this.value)">
     <div class="discount-mode-toggle" style="flex-wrap:wrap">
       <span>Category:</span>
@@ -2985,9 +3177,9 @@ function setStockField(field, value) { UI.stockForm[field] = value; rerender(); 
 function submitReceiveStock() {
   const f = UI.stockForm;
   if (!f.name.trim() || !f.qty) return;
-  let item = STATE.stockItems.find((it) => it.name.toLowerCase() === f.name.trim().toLowerCase());
+  let item = storeItems(f.store).find((it) => it.name.toLowerCase() === f.name.trim().toLowerCase());
   if (!item) {
-    item = { id: uid(), name: f.name.trim(), category: f.category, lowStockLimit: f.lowStockLimit || null };
+    item = { id: uid(), name: f.name.trim(), category: f.category, lowStockLimit: f.lowStockLimit || null, store: f.store };
     STATE.stockItems.push(item);
   } else if (f.lowStockLimit) {
     item.lowStockLimit = f.lowStockLimit;
@@ -3009,20 +3201,20 @@ function saveLimit(itemId) {
   rerender();
 }
 
-function startDispatchStock() {
-  UI.dispatchForm = { itemId: STATE.stockItems[0] ? STATE.stockItems[0].id : "", qty: "", destination: "", date: todayStr() };
+function startDispatchStock(store) {
+  UI.dispatchForm = { store, itemName: "", qty: "", destination: "", price: "", date: todayStr() };
   rerender();
 }
 function renderDispatchForm() {
   const f = UI.dispatchForm;
+  const matched = STATE.stockItems.find((it) => it.name.toLowerCase() === f.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
   return `
   <div class="entry-form" style="margin-top:12px">
-    <h3 style="margin-bottom:4px">📤 Dispatch Stock</h3>
-    <select id="ds-item" class="field" onchange="setDispatchField('itemId',this.value)">
-      ${STATE.stockItems.map((it) => `<option value="${it.id}" ${f.itemId === it.id ? "selected" : ""}>${esc(it.name)} (${qtyOf(it.id)} in stock)</option>`).join("")}
-    </select>
+    <input list="product-datalist" id="ds-item" class="field" placeholder="Type item name" value="${esc(f.itemName)}" oninput="setDispatchField('itemName',this.value)">
+    ${f.itemName.trim() ? `<div style="font-size:10.5px;color:${matched ? "#8290a4" : "#dc2636"};margin:-4px 0 4px 2px">${matched ? `${qtyOf(matched.id)} currently in stock` : "⚠️ Not found in this store's stock"}</div>` : ""}
     <input id="ds-qty" class="field" type="text" inputmode="numeric" placeholder="Quantity to dispatch" value="${esc(f.qty)}" oninput="this.value=sanitizeNum(this.value);setDispatchField('qty',this.value)">
     <input id="ds-dest" class="field" placeholder="Going to (customer / place)" value="${esc(f.destination)}" oninput="setDispatchField('destination',this.value)">
+    <input id="ds-price" class="field" type="text" inputmode="decimal" placeholder="Price (optional)" value="${esc(f.price)}" oninput="this.value=sanitizeNum(this.value);setDispatchField('price',this.value)">
     <label class="due-label">📅 Date</label>
     <input id="ds-date" class="field" type="date" value="${esc(f.date)}" oninput="setDispatchField('date',this.value)">
     <div class="form-actions">
@@ -3035,16 +3227,19 @@ function setDispatchField(field, value) { UI.dispatchForm[field] = value; rerend
 function submitDispatchStock() {
   const f = UI.dispatchForm;
   const qty = Number(f.qty);
-  if (!f.itemId || !qty || qty <= 0 || !f.destination.trim()) return;
-  const available = qtyOf(f.itemId);
+  if (!f.itemName.trim() || !qty || qty <= 0 || !f.destination.trim()) return;
+  const item = STATE.stockItems.find((it) => it.name.toLowerCase() === f.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
+  if (!item) { UI.err = "That item was not found in this store's stock."; return rerender(); }
+  const available = qtyOf(item.id);
   if (qty > available) { UI.err = "Not enough stock available for that quantity."; return rerender(); }
-  const movement = { id: uid(), itemId: f.itemId, type: "out", qty, destination: f.destination.trim(), date: f.date || todayStr() };
+  const movement = { id: uid(), itemId: item.id, type: "out", qty, destination: f.destination.trim(), date: f.date || todayStr(), price: f.price ? Number(f.price) : null };
   STATE.stockMovements.push(movement);
   saveStockMovements();
   UI.dispatchForm = null;
   UI.deliveryNoteId = movement.id;
   rerender();
 }
+
 
 function renderDeliveryNoteModal() {
   const m = STATE.stockMovements.find((x) => x.id === UI.deliveryNoteId);
