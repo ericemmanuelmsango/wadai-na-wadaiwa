@@ -272,7 +272,8 @@ function renderSetupNotice() {
 }
 
 /* ---------- LOGIN (one shared app password) ---------- */
-function appUnlocked() { return localStorage.getItem("ww_unlocked") === "1"; }
+let SESSION_UNLOCKED = false;
+function appUnlocked() { return SESSION_UNLOCKED; }
 
 function renderLogin(mode) {
   return `
@@ -299,7 +300,7 @@ function handleSetup() {
   if (pw !== pw2) { UI.authError = "Passwords do not match."; return rerender(); }
   STATE.settings.appPassword = pw;
   saveSettings();
-  localStorage.setItem("ww_unlocked", "1");
+  SESSION_UNLOCKED = true;
   rerender();
 }
 
@@ -307,12 +308,12 @@ function handleLogin() {
   const pw = document.getElementById("login-password").value;
   UI.authError = null;
   if (pw !== STATE.settings.appPassword) { UI.authError = "Incorrect password."; return rerender(); }
-  localStorage.setItem("ww_unlocked", "1");
+  SESSION_UNLOCKED = true;
   rerender();
 }
 
 function handleLogout() {
-  localStorage.removeItem("ww_unlocked");
+  SESSION_UNLOCKED = false;
   UI.page = "dashboard";
   UI.financialsUnlocked = false;
   rerender();
@@ -1803,34 +1804,17 @@ const BULK_PRODUCTS = [
 ];
 
 function renderProductsPage() {
-  const active = STATE.products.filter((p) => !p.deleted).sort((a, b) => a.name.localeCompare(b.name));
+  const active = STATE.products.filter((p) => !p.deleted);
   const trashed = STATE.products.filter((p) => p.deleted).sort((a, b) => a.name.localeCompare(b.name));
-  const search = UI.search.trim().toLowerCase();
-  const filtered = search ? active.filter((p) => p.name.toLowerCase().includes(search)) : active;
 
   return `
   <div class="panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <h3 style="margin:0">Your Products (${active.length})</h3>
       <button class="btn btn-sm btn-primary" onclick="importBulkProducts()">⬇️ Import Full Parts List (${BULK_PRODUCTS.length})</button>
     </div>
-    ${filtered.length === 0 ? `<p class="empty-note">No products found.</p>` : `
-    <div class="user-list">
-      ${filtered.map((p) => `
-        <div class="user-row">
-          ${UI.editingProductId === p.id ? `
-            <input id="edit-price-${p.id}" class="field field-sm" style="width:120px" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
-            <button class="btn btn-sm btn-primary" onclick="saveProductPrice('${p.id}')">Save</button>
-            <button class="btn btn-sm btn-ghost" onclick="UI.editingProductId=null;rerender();">Cancel</button>
-          ` : `
-            <div class="user-row-main"><span class="user-name">${esc(p.name)}</span><span class="user-detail">${fmt(p.price)}</span></div>
-            <div style="display:flex;gap:6px">
-              <button class="icon-btn" style="color:#1677ff" onclick="UI.editingProductId='${p.id}';rerender();">✏️</button>
-              <button class="icon-btn" onclick="trashProduct('${p.id}')">🗑️</button>
-            </div>
-          `}
-        </div>`).join("")}
-    </div>`}
+    <input id="product-search-input" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search product..." value="${esc(UI.search)}" oninput="UI.search=this.value;rerender();">
+    ${renderProductsByLetter(active)}
   </div>
 
   <div class="panel settings-panel" style="margin-top:16px">
@@ -1892,6 +1876,45 @@ function permanentlyDeleteProduct(id) {
   saveProducts();
   rerender();
 }
+function renderProductsByLetter(active) {
+  const search = (UI.search || "").trim().toLowerCase();
+  const items = active.filter((p) => !search || p.name.toLowerCase().includes(search)).sort((a, b) => a.name.localeCompare(b.name));
+  if (items.length === 0) return `<p class="empty-note">No products found.</p>`;
+  const groups = {};
+  items.forEach((p) => { const l = (p.name[0] || "#").toUpperCase(); (groups[l] = groups[l] || []).push(p); });
+  const letters = Object.keys(groups).sort();
+  const forceOpen = !!search;
+  if (!UI.openProductLetters) UI.openProductLetters = {};
+  return letters.map((letter) => {
+    const list = groups[letter];
+    const isOpen = forceOpen || UI.openProductLetters[letter];
+    return `
+    <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">
+      <button class="history-toggle" style="width:100%;justify-content:space-between;padding:10px 12px;margin:0" onclick="UI.openProductLetters['${letter}']=!UI.openProductLetters['${letter}'];rerender();">
+        <span>\ud83d\udcc1 ${letter} (${list.length})</span>
+        <span>${isOpen ? "\u25b2" : "\u25bc"}</span>
+      </button>
+      ${isOpen ? `
+      <div class="user-list" style="padding:8px">
+        ${list.map((p) => `
+          <div class="user-row">
+            ${UI.editingProductId === p.id ? `
+              <input id="edit-price-${p.id}" class="field field-sm" style="width:120px" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
+              <button class="btn btn-sm btn-primary" onclick="saveProductPrice('${p.id}')">Save</button>
+              <button class="btn btn-sm btn-ghost" onclick="UI.editingProductId=null;rerender();">Cancel</button>
+            ` : `
+              <div class="user-row-main"><span class="user-name">${esc(p.name)}</span><span class="user-detail">${fmt(p.price)}</span></div>
+              <div style="display:flex;gap:6px">
+                <button class="icon-btn" style="color:#1677ff" onclick="UI.editingProductId='${p.id}';rerender();">\u270f\ufe0f</button>
+                <button class="icon-btn" onclick="trashProduct('${p.id}')">\ud83d\uddd1\ufe0f</button>
+              </div>
+            `}
+          </div>`).join("")}
+      </div>` : ""}
+    </div>`;
+  }).join("");
+}
+
 function importBulkProducts() {
   const existingNames = new Set(STATE.products.map((p) => p.name.toLowerCase()));
   let added = 0;
@@ -1987,21 +2010,29 @@ function renderAlerts() {
     ${dueToday.length === 0 ? `<p class="empty-note">Nothing due today.</p>` : dueToday.map(alertRow).join("")}
   </div>
   <div class="panel" style="margin-top:16px">
-    <h3>📦 Low Stock (${lowStockCount("dukani") + lowStockCount("godown")})</h3>
-    ${(lowStockCount("dukani") + lowStockCount("godown")) === 0 ? `<p class="empty-note">All stock levels are fine.</p>` : STATE.stockItems.filter((it) => isLowStock(it) && !isZeroStock(it)).map((it) => `
-      <div class="alert">
-        <div class="alert-icon overdue">📦</div>
-        <div class="alert-body"><strong>${esc(it.name)} is running low</strong><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"} · Only ${qtyOf(it.id)} left (limit: ${it.lowStockLimit})</small></div>
-      </div>`).join("")}
+    <h3>🏪 Dukani Stock Alerts</h3>
+    ${renderStockAlertGroup("dukani")}
   </div>
   <div class="panel" style="margin-top:16px">
-    <h3>⛔ Zero Stock (${zeroStockCount("dukani") + zeroStockCount("godown")})</h3>
-    ${(zeroStockCount("dukani") + zeroStockCount("godown")) === 0 ? `<p class="empty-note">Nothing is out of stock.</p>` : STATE.stockItems.filter((it) => isZeroStock(it)).map((it) => `
+    <h3>🏭 Godown Stock Alerts</h3>
+    ${renderStockAlertGroup("godown")}
+  </div>`;
+}
+function renderStockAlertGroup(store) {
+  const low = storeItems(store).filter((it) => isLowStock(it) && !isZeroStock(it));
+  const zero = storeItems(store).filter((it) => isZeroStock(it));
+  if (low.length === 0 && zero.length === 0) return `<p class="empty-note">All stock levels are fine.</p>`;
+  return `
+    ${zero.map((it) => `
       <div class="alert">
         <div class="alert-icon overdue">⛔</div>
-        <div class="alert-body"><strong>${esc(it.name)} is out of stock</strong><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"}</small></div>
+        <div class="alert-body"><strong>${esc(it.name)} is out of stock</strong><small>Zero remaining</small></div>
       </div>`).join("")}
-  </div>`;
+    ${low.map((it) => `
+      <div class="alert">
+        <div class="alert-icon overdue">📦</div>
+        <div class="alert-body"><strong>${esc(it.name)} is running low</strong><small>Only ${qtyOf(it.id)} left (limit: ${it.lowStockLimit})</small></div>
+      </div>`).join("")}`;
 }
 function alertRow(e) {
   const status = dueStatus(e);
@@ -2247,6 +2278,14 @@ function renderReports() {
   const unknownCostCount = salesInRange.filter((x) => x.buyPrice == null).length;
   const profit = revenue - cost;
 
+  const totalCapital = STATE.stockItems.reduce((s, it) => {
+    const qty = qtyOf(it.id);
+    const avg = avgBuyPrice(it.id);
+    return s + (qty > 0 && avg != null ? qty * avg : 0);
+  }, 0);
+  const capitalDukani = storeItems("dukani").reduce((s, it) => { const q = qtyOf(it.id); const a = avgBuyPrice(it.id); return s + (q > 0 && a != null ? q * a : 0); }, 0);
+  const capitalGodown = storeItems("godown").reduce((s, it) => { const q = qtyOf(it.id); const a = avgBuyPrice(it.id); return s + (q > 0 && a != null ? q * a : 0); }, 0);
+
   function setPreset(days) {
     const to = new Date();
     const from = new Date();
@@ -2264,6 +2303,17 @@ function renderReports() {
     ${statCard("Owed to Creditors", fmt(totalIssuedOwe), "total credit received", "purple")}
     ${statCard("Paid So Far", fmt(totalPaidOut), "paid to creditors", "orange")}
   </div>
+
+  <div class="panel" style="margin-top:16px">
+    <h3>💰 Total Capital (Inventory Value)</h3>
+    <p style="font-size:11.5px;color:#6b7280;margin-bottom:10px">Based on buying price × quantity currently in stock.</p>
+    <div class="cards" style="grid-template-columns:repeat(3,1fr)">
+      ${statCard("Dukani", fmt(capitalDukani), "stock value at shop", "blue")}
+      ${statCard("Godown", fmt(capitalGodown), "stock value at warehouse", "purple")}
+      ${statCard("Total Capital", fmt(totalCapital), "combined inventory value", "green")}
+    </div>
+  </div>
+
   <div class="panel" style="margin-top:16px">
     <h3>Monthly Volume</h3>
     <div class="chart-container"><canvas id="chart-monthly"></canvas></div>
@@ -3202,7 +3252,7 @@ function saveLimit(itemId) {
 }
 
 function startDispatchStock(store) {
-  UI.dispatchForm = { store, itemName: "", qty: "", destination: "", price: "", date: todayStr() };
+  UI.dispatchForm = { store, mode: "transfer", itemName: "", qty: "", destination: "", price: "", date: todayStr() };
   rerender();
 }
 function renderDispatchForm() {
@@ -3210,16 +3260,22 @@ function renderDispatchForm() {
   const matched = STATE.stockItems.find((it) => it.name.toLowerCase() === f.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
   return `
   <div class="entry-form" style="margin-top:12px">
+    <div class="mode-toggle">
+      <button class="mode-btn ${f.mode === "transfer" ? "active" : ""}" onclick="setDispatchField('mode','transfer')">🔁 Send to Dukani</button>
+      <button class="mode-btn ${f.mode === "customer" ? "active" : ""}" onclick="setDispatchField('mode','customer')">🧾 Sell to Customer</button>
+    </div>
     <input list="product-datalist" id="ds-item" class="field" placeholder="Type item name" value="${esc(f.itemName)}" oninput="setDispatchField('itemName',this.value)">
     ${f.itemName.trim() ? `<div style="font-size:10.5px;color:${matched ? "#8290a4" : "#dc2636"};margin:-4px 0 4px 2px">${matched ? `${qtyOf(matched.id)} currently in stock` : "⚠️ Not found in this store's stock"}</div>` : ""}
     <input id="ds-qty" class="field" type="text" inputmode="numeric" placeholder="Quantity to dispatch" value="${esc(f.qty)}" oninput="this.value=sanitizeNum(this.value);setDispatchField('qty',this.value)">
-    <input id="ds-dest" class="field" placeholder="Going to (customer / place)" value="${esc(f.destination)}" oninput="setDispatchField('destination',this.value)">
-    <input id="ds-price" class="field" type="text" inputmode="decimal" placeholder="Price (optional)" value="${esc(f.price)}" oninput="this.value=sanitizeNum(this.value);setDispatchField('price',this.value)">
+    ${f.mode === "customer" ? `
+      <input id="ds-dest" class="field" placeholder="Customer / place" value="${esc(f.destination)}" oninput="setDispatchField('destination',this.value)">
+      <input id="ds-price" class="field" type="text" inputmode="decimal" placeholder="Price (optional)" value="${esc(f.price)}" oninput="this.value=sanitizeNum(this.value);setDispatchField('price',this.value)">
+    ` : `<p style="font-size:11.5px;color:#6b7280;margin:2px 0">This will move stock out of Godown and automatically appear in Dukani's stock, received the same day.</p>`}
     <label class="due-label">📅 Date</label>
     <input id="ds-date" class="field" type="date" value="${esc(f.date)}" oninput="setDispatchField('date',this.value)">
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="UI.dispatchForm=null;rerender();">Cancel</button>
-      <button class="btn btn-primary" onclick="submitDispatchStock()">Save &amp; Create Delivery Note</button>
+      <button class="btn btn-primary" onclick="submitDispatchStock()">Save${f.mode === "customer" ? " & Create Delivery Note" : ""}</button>
     </div>
   </div>`;
 }
@@ -3227,12 +3283,33 @@ function setDispatchField(field, value) { UI.dispatchForm[field] = value; rerend
 function submitDispatchStock() {
   const f = UI.dispatchForm;
   const qty = Number(f.qty);
-  if (!f.itemName.trim() || !qty || qty <= 0 || !f.destination.trim()) return;
+  if (!f.itemName.trim() || !qty || qty <= 0) return;
+  if (f.mode === "customer" && !f.destination.trim()) return;
   const item = STATE.stockItems.find((it) => it.name.toLowerCase() === f.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
   if (!item) { UI.err = "That item was not found in this store's stock."; return rerender(); }
   const available = qtyOf(item.id);
   if (qty > available) { UI.err = "Not enough stock available for that quantity."; return rerender(); }
-  const movement = { id: uid(), itemId: item.id, type: "out", qty, destination: f.destination.trim(), date: f.date || todayStr(), price: f.price ? Number(f.price) : null };
+  const date = f.date || todayStr();
+
+  if (f.mode === "transfer") {
+    STATE.stockMovements.push({ id: uid(), itemId: item.id, type: "out", qty, destination: "Dukani (transfer)", date });
+    let target = STATE.stockItems.find((it) => it.name.toLowerCase() === item.name.toLowerCase() && (it.store || "dukani") === "dukani");
+    if (!target) {
+      target = { id: uid(), name: item.name, category: item.category, lowStockLimit: item.lowStockLimit, store: "dukani" };
+      STATE.stockItems.push(target);
+    }
+    const avgPrice = avgBuyPrice(item.id);
+    STATE.stockMovements.push({ id: uid(), itemId: target.id, type: "in", qty, supplier: "Godown Transfer", date, price: avgPrice });
+    saveStockItems();
+    saveStockMovements();
+    UI.dispatchForm = null;
+    UI.err = null;
+    alert(`${qty} × ${item.name} sent to Dukani.`);
+    rerender();
+    return;
+  }
+
+  const movement = { id: uid(), itemId: item.id, type: "out", qty, destination: f.destination.trim(), date, price: f.price ? Number(f.price) : null };
   STATE.stockMovements.push(movement);
   saveStockMovements();
   UI.dispatchForm = null;
