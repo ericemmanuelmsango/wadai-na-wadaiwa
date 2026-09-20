@@ -392,6 +392,7 @@ function renderShell() {
     </main>
     ${UI.receiptEntryId ? renderReceiptModal() : ""}
     ${UI.deliveryNoteId ? renderDeliveryNoteModal() : ""}
+    ${UI.customerReceipt ? renderCustomerReceiptModal() : ""}
     <datalist id="product-datalist">
       ${STATE.products.map((p) => `<option value="${esc(p.name)}">`).join("")}
     </datalist>
@@ -2092,13 +2093,17 @@ function setSalesStore(store) {
 
 function renderSalesPage() {
   if (!UI.salesStore) UI.salesStore = "dukani";
+  if (!UI.salesView) UI.salesView = "day";
   if (!UI.saleForm) UI.saleForm = { store: UI.salesStore, customer: "", date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
   const f = UI.saleForm;
   const grandTotal = f.rows.reduce((s, r) => s + (Number(r.price) || 0) * (Number(r.qty) || 0), 0);
-  const salesInStore = STATE.sales.filter((s) => (s.store || "dukani") === UI.salesStore);
+  const salesInStore = STATE.sales.filter((s) => (s.store || "dukani") === UI.salesStore && !s.archived);
   const salesByDay = {};
   salesInStore.forEach((s) => { (salesByDay[s.date] = salesByDay[s.date] || []).push(s); });
   const days = Object.keys(salesByDay).sort((a, b) => (a < b ? 1 : -1));
+  const salesByCustomer = {};
+  salesInStore.forEach((s) => { const c = s.customer && s.customer.trim() ? s.customer.trim() : "Walk-in Customer"; (salesByCustomer[c] = salesByCustomer[c] || []).push(s); });
+  const customers = Object.keys(salesByCustomer).sort((a, b) => a.localeCompare(b));
 
   return `
   <div class="mode-toggle" style="max-width:320px">
@@ -2139,21 +2144,48 @@ function renderSalesPage() {
   </div>
 
   <div class="panel" style="margin-top:16px">
-    <h3>Sales by Day — ${UI.salesStore === "godown" ? "Godown" : "Dukani"}</h3>
-    ${days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : days.map((day) => {
-      const list = salesByDay[day];
-      const dayTotal = list.reduce((s, x) => s + x.total, 0);
-      return `
-      <div style="margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 4px;border-bottom:2px solid var(--line)">
-          <strong style="font-size:13px">${day}</strong>
-          <span style="font-size:12.5px;font-weight:700;color:var(--green)">${fmt(dayTotal)}</span>
-        </div>
-        <table class="recent-table"><tbody>
-          ${list.map((s) => renderSaleRow(s)).join("")}
-        </tbody></table>
-      </div>`;
-    }).join("")}
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:10px">
+      <h3 style="margin:0">Sales — ${UI.salesStore === "godown" ? "Godown" : "Dukani"}</h3>
+      <div class="mode-toggle" style="max-width:220px;margin:0">
+        <button class="mode-btn ${UI.salesView === "day" ? "active" : ""}" onclick="UI.salesView='day';rerender();">📅 By Day</button>
+        <button class="mode-btn ${UI.salesView === "customer" ? "active" : ""}" onclick="UI.salesView='customer';rerender();">👤 By Customer</button>
+      </div>
+    </div>
+    ${UI.salesView === "day" ? (
+      days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : days.map((day) => {
+        const list = salesByDay[day];
+        const dayTotal = list.reduce((s, x) => s + x.total, 0);
+        return `
+        <div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 4px;border-bottom:2px solid var(--line)">
+            <strong style="font-size:13px">${day}</strong>
+            <span style="font-size:12.5px;font-weight:700;color:var(--green)">${fmt(dayTotal)}</span>
+          </div>
+          <table class="recent-table"><tbody>
+            ${list.map((s) => renderSaleRow(s)).join("")}
+          </tbody></table>
+        </div>`;
+      }).join("")
+    ) : (
+      customers.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : customers.map((cust) => {
+        const list = salesByCustomer[cust];
+        const custTotal = list.reduce((s, x) => s + x.total, 0);
+        return `
+        <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:10px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--paper-alt)">
+            <strong style="font-size:13px">👤 ${esc(cust)} <span style="font-weight:400;color:#8290a4">(${list.length})</span></strong>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-weight:700;color:var(--green)">${fmt(custTotal)}</span>
+              <button class="btn btn-sm btn-ghost" onclick="printCustomerReceipt('${esc(cust)}','${UI.salesStore}')">🖨️ Receipt</button>
+              <button class="btn btn-sm btn-ghost" onclick="archiveCustomerSales('${esc(cust)}','${UI.salesStore}')">🗄️ Move to History</button>
+            </div>
+          </div>
+          <table class="recent-table"><tbody>
+            ${list.map((s) => renderSaleRow(s)).join("")}
+          </tbody></table>
+        </div>`;
+      }).join("")
+    )}
   </div>`;
 }
 function renderSaleRow(s) {
@@ -2252,6 +2284,57 @@ function deleteSale(id) {
   STATE.sales = STATE.sales.filter((s) => s.id !== id);
   saveSales();
   rerender();
+}
+
+function archiveCustomerSales(customer, store) {
+  if (!confirm(`Move all of ${customer}'s sales to history? This will NOT affect stock — the sale already happened.`)) return;
+  const target = customer === "Walk-in Customer" ? "" : customer;
+  STATE.sales = STATE.sales.map((s) => {
+    const c = s.customer && s.customer.trim() ? s.customer.trim() : "";
+    if ((s.store || "dukani") === store && c === target && !s.archived) {
+      return { ...s, archived: true, archivedDate: todayStr() };
+    }
+    return s;
+  });
+  saveSales();
+  rerender();
+}
+
+function printCustomerReceipt(customer, store) {
+  const target = customer === "Walk-in Customer" ? "" : customer;
+  const list = STATE.sales.filter((s) => (s.store || "dukani") === store && !s.archived && (s.customer && s.customer.trim() ? s.customer.trim() : "") === target);
+  if (list.length === 0) return;
+  UI.customerReceipt = { customer, store, items: list };
+  rerender();
+}
+
+function renderCustomerReceiptModal() {
+  const r = UI.customerReceipt;
+  if (!r) return "";
+  const total = r.items.reduce((s, x) => s + x.total, 0);
+  return `
+  <div class="modal-overlay">
+    <div class="modal-stack">
+      <div class="receipt-print">
+        <h2 class="receipt-title" style="display:flex;align-items:center;gap:8px;justify-content:center">${companyLogo(30)} Receipt</h2>
+        <div class="receipt-meta">
+          <div><strong>${esc(r.customer)}</strong></div>
+          <div>${r.store === "godown" ? "Godown" : "Dukani"}</div>
+        </div>
+        <table class="receipt-table">
+          <thead><tr><th>Item</th><th>Price</th><th>Qty</th><th>Total</th><th>Date</th></tr></thead>
+          <tbody>
+            ${r.items.map((s) => `<tr><td>${esc(s.itemName)}</td><td>${fmt(s.sellPrice)}</td><td>${s.qty}</td><td>${fmt(s.total)}</td><td>${s.date}</td></tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="receipt-total-row"><span>Grand Total</span><span>${fmt(total)}</span></div>
+      </div>
+      <div class="modal-actions no-print">
+        <button class="btn btn-ghost" onclick="UI.customerReceipt=null;rerender();">Close</button>
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 
