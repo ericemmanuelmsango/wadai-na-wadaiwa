@@ -2071,9 +2071,12 @@ function setSaleRow(rowId, field, value) {
   const f = UI.saleForm;
   f.rows = f.rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r));
   if (field === "itemName") {
-    const prod = STATE.products.find((p) => p.name.toLowerCase() === value.trim().toLowerCase());
     const row = f.rows.find((r) => r.id === rowId);
-    if (prod && !row.price) row.price = String(prod.price);
+    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === value.trim().toLowerCase() && (it.store || "dukani") === f.store);
+    if (stockItem) {
+      const buyPrice = avgBuyPrice(stockItem.id);
+      if (buyPrice != null && !row.price) row.price = String(Math.round(buyPrice));
+    }
   }
   rerender();
 }
@@ -2123,17 +2126,18 @@ function renderSalesPage() {
       ${f.rows.map((r) => {
         const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
         const available = stockItem ? qtyOf(stockItem.id) : null;
+        const buyP = stockItem ? avgBuyPrice(stockItem.id) : null;
         const lineTotal = (Number(r.price) || 0) * (Number(r.qty) || 0);
         return `
         <div class="item-row" style="grid-template-columns:1.4fr .9fr .6fr .9fr auto">
           <input list="product-datalist" id="slr-name-${r.id}" class="field field-sm" placeholder="Type item name" value="${esc(r.itemName)}" oninput="setSaleRow('${r.id}','itemName',this.value)">
-          <input id="slr-price-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setSaleRow('${r.id}','price',this.value)">
+          <input id="slr-price-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Selling price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setSaleRow('${r.id}','price',this.value)">
           <input id="slr-qty-${r.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setSaleRow('${r.id}','qty',this.value)">
           <span class="item-line-total">${fmt(lineTotal)}</span>
           ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeSaleRow('${r.id}')">🗑️</button>` : `<span></span>`}
         </div>
         ${r.itemName.trim() ? `<div style="font-size:10.5px;color:${available == null ? "#dc2636" : "#8290a4"};margin:-4px 0 6px 2px">
-          ${available == null ? `⚠️ Not found in ${UI.salesStore === "godown" ? "Godown" : "Dukani"} stock` : `${available} currently in stock`}
+          ${available == null ? `⚠️ Not found in ${UI.salesStore === "godown" ? "Godown" : "Dukani"} stock` : `${available} in stock${buyP != null ? ` · bought at ${fmt(buyP)} (edit price above to your selling price)` : " · no buying price on record for this item"}`}
         </div>` : ""}`;
       }).join("")}
       <button class="add-row-btn" onclick="addSaleRow()">＋ Add Item</button>
