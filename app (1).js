@@ -29,6 +29,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
+const APP_VERSION = "v33";
 let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -173,15 +174,9 @@ function loadState() {
     if (!u) return;
     AUTH_READY = true;
     if (!docRef._unsub) {
-      docRef._unsub = docRef.onSnapshot((doc) => {
-        const data = doc.exists ? doc.data() : {};
-        STATE.entries = data.entries || [];
-        STATE.products = data.products || [];
-        STATE.stockItems = data.stockItems || [];
-        STATE.stockMovements = data.stockMovements || [];
-        STATE.sales = data.sales || [];
-        STATE.deliveries = data.deliveries || [];
-        STATE.settings = data.settings || { appPassword: null, reportsPassword: "eric1234" };
+      docRef._unsub = docRef.onSnapshot({ includeMetadataChanges: true }, (doc) => {
+        UI.sync = { fromCache: doc.metadata.fromCache, pending: doc.metadata.hasPendingWrites, at: new Date() };
+        applyCloudData(doc.exists ? doc.data() : {});
         const wasLoaded = STATE_LOADED;
         STATE_LOADED = true;
         if (wasLoaded) checkAlertsForNotification();
@@ -194,6 +189,38 @@ function loadState() {
     }
     rerender();
   });
+}
+function applyCloudData(data) {
+  STATE.entries = data.entries || [];
+  STATE.products = data.products || [];
+  STATE.stockItems = data.stockItems || [];
+  STATE.stockMovements = data.stockMovements || [];
+  STATE.sales = data.sales || [];
+  STATE.deliveries = data.deliveries || [];
+  STATE.settings = data.settings || { appPassword: null, reportsPassword: "eric1234" };
+}
+// Forces a fresh copy straight from the cloud (ignores anything saved on this device).
+function reloadFromCloud() {
+  if (!docRef) return;
+  UI.syncCheckMsg = { ok: true, text: "Loading from cloud…" };
+  rerender();
+  docRef.get({ source: "server" }).then((doc) => {
+    applyCloudData(doc.exists ? doc.data() : {});
+    UI.sync = { fromCache: false, pending: false, at: new Date() };
+    UI.syncCheckMsg = { ok: true, text: "✅ Fresh data loaded from the cloud." };
+    rerender();
+  }).catch((e) => {
+    UI.syncCheckMsg = { ok: false, text: "❌ Could not reach the cloud: " + (e && e.message ? e.message : "no internet") };
+    rerender();
+  });
+}
+function syncPill() {
+  const s = UI.sync;
+  let dot = "🟢", txt = "Live";
+  if (!s) { dot = "⚪"; txt = "Connecting"; }
+  else if (s.pending) { dot = "🟡"; txt = "Saving…"; }
+  else if (s.fromCache) { dot = "🔴"; txt = "Offline"; }
+  return `<button class="logout-btn" title="Sync status — tap for details" onclick="setPage('settings')" style="white-space:nowrap">${dot} ${txt} · ${APP_VERSION}</button>`;
 }
 function onSaveError(err) {
   UI.err = "⚠️ Could not sync to the cloud — check your internet connection and try again. Your last change may not be saved on other devices yet.";
@@ -418,6 +445,7 @@ function renderShell() {
         <div class="profile">
           <button class="bell-wrap" onclick="setPage('alerts')">🔔${dueCount > 0 ? `<span class="bell-dot">${dueCount}</span>` : ""}</button>
           <div class="avatar"></div>
+          ${syncPill()}
           <button class="logout-btn" onclick="handleLogout()">⏻ Lock</button>
         </div>
       </header>
@@ -2548,8 +2576,27 @@ function renderReports() {
 /* ---------- SETTINGS ---------- */
 function renderSettings() {
   const notifStatus = ("Notification" in window) ? Notification.permission : "unsupported";
+  const s = UI.sync;
+  const active = STATE.entries.filter((e) => !e.archived);
   return `
   <div class="panel settings-panel">
+    <h3>☁️ Sync Check (compare phone & computer)</h3>
+    <p style="font-size:12px;color:#6b7280">Open this page on BOTH devices. Every line below must be the same. If not, read the tip at the bottom.</p>
+    <table class="recent-table" style="width:100%;font-size:12.5px"><tbody>
+      <tr><td>App version</td><td style="text-align:right"><strong>${APP_VERSION}</strong></td></tr>
+      <tr><td>Website address</td><td style="text-align:right;word-break:break-all"><strong>${esc(location.host + location.pathname)}</strong></td></tr>
+      <tr><td>Database</td><td style="text-align:right"><strong>${esc(firebaseConfig.projectId)}</strong></td></tr>
+      <tr><td>Connection</td><td style="text-align:right"><strong>${!s ? "Connecting…" : s.fromCache ? "🔴 Offline — showing copy saved on this device" : s.pending ? "🟡 Saving…" : "🟢 Live with cloud"}</strong></td></tr>
+      <tr><td>Last update received</td><td style="text-align:right">${s ? s.at.toLocaleTimeString() : "—"}</td></tr>
+      <tr><td>Debtors / Creditors</td><td style="text-align:right"><strong>${active.filter((e) => e.kind === "owed_to_me").length} / ${active.filter((e) => e.kind === "i_owe").length}</strong></td></tr>
+      <tr><td>Products / Stock records</td><td style="text-align:right"><strong>${STATE.products.length} / ${STATE.stockMovements.length}</strong></td></tr>
+    </tbody></table>
+    ${UI.syncCheckMsg ? `<p class="settings-msg ${UI.syncCheckMsg.ok ? "ok" : "err"}">${esc(UI.syncCheckMsg.text)}</p>` : ""}
+    <button class="btn btn-primary" style="margin-top:10px" onclick="reloadFromCloud()">🔄 Reload from cloud</button>
+    <p style="font-size:11.5px;color:#6b7280;margin-top:10px">💡 If this whole box is missing on one device, that device is opening an OLD copy of the system (old link, old Claude artifact, or browser cache). Use the same website address on both.</p>
+  </div>
+
+  <div class="panel settings-panel" style="margin-top:16px">
     <h3>🖼️ Company Logo</h3>
     <p style="font-size:12px;color:#6b7280">Upload your own logo to replace the default one on screens and receipts.</p>
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
