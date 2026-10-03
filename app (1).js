@@ -29,7 +29,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
+let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
 let UI = {
@@ -180,6 +180,7 @@ function loadState() {
         STATE.stockItems = data.stockItems || [];
         STATE.stockMovements = data.stockMovements || [];
         STATE.sales = data.sales || [];
+        STATE.deliveries = data.deliveries || [];
         STATE.settings = data.settings || { appPassword: null, reportsPassword: "eric1234" };
         const wasLoaded = STATE_LOADED;
         STATE_LOADED = true;
@@ -205,12 +206,20 @@ function onSaveSuccess() {
 function saveEntries() { if (docRef) docRef.set({ entries: STATE.entries }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
 function saveProducts() { if (docRef) docRef.set({ products: STATE.products }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
 function saveStockItems() { if (docRef) docRef.set({ stockItems: STATE.stockItems }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
-function saveStockMovements() { if (docRef) docRef.set({ stockMovements: STATE.stockMovements }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveStockMovements() { invalidateStock(); if (docRef) docRef.set({ stockMovements: STATE.stockMovements }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
 function saveSales() { if (docRef) docRef.set({ sales: STATE.sales }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveDeliveries() { if (docRef) docRef.set({ deliveries: STATE.deliveries }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
 function saveSettings() { if (docRef) docRef.set({ settings: STATE.settings }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
 
 /* ---------- render with focus preservation ---------- */
+// Used by search boxes: waits until you stop typing for a moment, then redraws once.
+let _softTimer = null;
+function softRerender(delay) {
+  clearTimeout(_softTimer);
+  _softTimer = setTimeout(rerender, delay == null ? 250 : delay);
+}
 function rerender() {
+  clearTimeout(_softTimer);
   const active = document.activeElement;
   const activeId = active && active.id;
   const selStart = active && "selectionStart" in active ? active.selectionStart : null;
@@ -228,6 +237,7 @@ function rerender() {
 }
 
 function render() {
+  invalidateStock();
   const root = document.getElementById("app");
   if (!CONFIG_IS_SET) {
     root.innerHTML = renderSetupNotice();
@@ -246,7 +256,40 @@ function render() {
     return;
   }
   root.innerHTML = renderShell();
-  renderCharts();
+  syncDatalists();
+  if (UI.page === "dashboard") renderCharts();
+}
+
+/* The product / supplier suggestion lists live OUTSIDE the app area and are only
+   rebuilt when the lists actually change — rebuilding 1,000+ options on every
+   key press was the main reason typing felt slow. */
+let _productListSig = "", _supplierListSig = "";
+function syncDatalists() {
+  let host = document.getElementById("datalist-host");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "datalist-host";
+    host.style.display = "none";
+    host.innerHTML = '<datalist id="product-datalist"></datalist><datalist id="supplier-datalist"></datalist>';
+    document.body.appendChild(host);
+  }
+  const names = STATE.products.filter((p) => !p.deleted).map((p) => p.name);
+  STATE.stockItems.forEach((it) => names.push(it.name));
+  const unique = [...new Set(names)].sort((a, b) => a.localeCompare(b));
+  const sig = unique.length + "|" + unique.join("\u0001").length;
+  if (sig !== _productListSig) {
+    _productListSig = sig;
+    document.getElementById("product-datalist").innerHTML = unique.map((n) => `<option value="${esc(n)}">`).join("");
+  }
+  const sups = new Set();
+  (STATE.deliveries || []).forEach((d) => d.supplier && sups.add(d.supplier));
+  STATE.stockMovements.forEach((m) => m.type === "in" && m.supplier && m.supplier !== "Godown Transfer" && sups.add(m.supplier));
+  const supList = [...sups].sort((a, b) => a.localeCompare(b));
+  const sig2 = supList.join("\u0001");
+  if (sig2 !== _supplierListSig) {
+    _supplierListSig = sig2;
+    document.getElementById("supplier-datalist").innerHTML = supList.map((n) => `<option value="${esc(n)}">`).join("");
+  }
 }
 function loadingScreen() {
   return `<div class="login-wrap"><div class="login-card" style="text-align:center">
@@ -370,7 +413,7 @@ function renderShell() {
     <main class="main">
       <header class="topbar">
         <div class="search">🔍&nbsp;
-          <input id="search-input" placeholder="Search by name..." value="${esc(UI.search)}" oninput="UI.search=this.value; rerender();">
+          <input id="search-input" placeholder="Search by name..." value="${esc(UI.search)}" oninput="UI.search=this.value; softRerender();">
         </div>
         <div class="profile">
           <button class="bell-wrap" onclick="setPage('alerts')">🔔${dueCount > 0 ? `<span class="bell-dot">${dueCount}</span>` : ""}</button>
@@ -393,11 +436,13 @@ function renderShell() {
     ${UI.receiptEntryId ? renderReceiptModal() : ""}
     ${UI.deliveryNoteId ? renderDeliveryNoteModal() : ""}
     ${UI.customerReceipt ? renderCustomerReceiptModal() : ""}
-    <datalist id="product-datalist">
-      ${STATE.products.map((p) => `<option value="${esc(p.name)}">`).join("")}
-    </datalist>
+    ${UI.grnId ? renderGrnModal() : ""}
+    ${UI.deleteDeliveryId ? renderDeleteDeliveryModal() : ""}
   </div>`;
 }
+
+/* Update a number on screen without redrawing the whole page (keeps typing fast). */
+function setText(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
 
 function setPage(p) { UI.page = p; UI.receiptEntryId = null; rerender(); }
 
@@ -1814,7 +1859,7 @@ function renderProductsPage() {
       <h3 style="margin:0">Your Products (${active.length})</h3>
       <button class="btn btn-sm btn-primary" onclick="importBulkProducts()">⬇️ Import Full Parts List (${BULK_PRODUCTS.length})</button>
     </div>
-    <input id="product-search-input" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search product..." value="${esc(UI.search)}" oninput="UI.search=this.value;rerender();">
+    <input id="product-search-input" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search product..." value="${esc(UI.search)}" oninput="UI.search=this.value;softRerender();">
     ${renderProductsByLetter(active)}
   </div>
 
@@ -1822,6 +1867,7 @@ function renderProductsPage() {
     <h3>➕ Add Product</h3>
     <input id="pr-name" class="field" placeholder="Product name">
     <input id="pr-price" class="field" type="text" inputmode="decimal" placeholder="Selling price (TSh)" oninput="this.value=sanitizeNum(this.value)">
+    <input id="pr-buy" class="field" type="text" inputmode="decimal" placeholder="Buying price (TSh) — optional" oninput="this.value=sanitizeNum(this.value)">
     ${UI.userMsg && UI.userMsg.forProduct ? `<p class="settings-msg ${UI.userMsg.ok ? "ok" : "err"}">${esc(UI.userMsg.text)}</p>` : ""}
     <button class="btn btn-primary" onclick="addProduct()">Add Product</button>
   </div>
@@ -1849,14 +1895,19 @@ function addProduct() {
   if (STATE.products.some((p) => !p.deleted && p.name.toLowerCase() === name.toLowerCase())) {
     UI.userMsg = { ok: false, text: "That product already exists.", forProduct: true }; return rerender();
   }
-  STATE.products.push({ id: uid(), name, price: price || 0 });
+  const buyVal = document.getElementById("pr-buy").value;
+  STATE.products.push({ id: uid(), name, price: price || 0, ...(buyVal ? { buyPrice: Number(buyVal) } : {}) });
+  if (buyVal) { setBuyPriceEverywhere(name, Number(buyVal)); saveStockItems(); }
   saveProducts();
   UI.userMsg = { ok: true, text: `${name} added.`, forProduct: true };
   rerender();
 }
 function saveProductPrice(id) {
   const val = Number(document.getElementById("edit-price-" + id).value) || 0;
+  const buyRaw = document.getElementById("edit-buy-" + id).value;
+  const prod = STATE.products.find((p) => p.id === id);
   STATE.products = STATE.products.map((p) => (p.id === id ? { ...p, price: val } : p));
+  if (prod && buyRaw !== "") { setBuyPriceEverywhere(prod.name, Number(buyRaw)); saveStockItems(); }
   saveProducts();
   UI.editingProductId = null;
   rerender();
@@ -1898,13 +1949,17 @@ function renderProductsByLetter(active) {
       ${isOpen ? `
       <div class="user-list" style="padding:8px">
         ${list.map((p) => `
-          <div class="user-row">
+          <div class="user-row" style="flex-wrap:wrap;gap:6px">
             ${UI.editingProductId === p.id ? `
-              <input id="edit-price-${p.id}" class="field field-sm" style="width:120px" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
+              <span class="user-name" style="flex:1 1 100%">${esc(p.name)}</span>
+              <label style="font-size:11px;color:#6b7280">Sell</label>
+              <input id="edit-price-${p.id}" class="field field-sm" style="width:110px" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
+              <label style="font-size:11px;color:#6b7280">Buy</label>
+              <input id="edit-buy-${p.id}" class="field field-sm" style="width:110px" type="text" inputmode="decimal" value="${p.buyPrice != null ? p.buyPrice : ""}" placeholder="—" oninput="this.value=sanitizeNum(this.value)">
               <button class="btn btn-sm btn-primary" onclick="saveProductPrice('${p.id}')">Save</button>
               <button class="btn btn-sm btn-ghost" onclick="UI.editingProductId=null;rerender();">Cancel</button>
             ` : `
-              <div class="user-row-main"><span class="user-name">${esc(p.name)}</span><span class="user-detail">${fmt(p.price)}</span></div>
+              <div class="user-row-main"><span class="user-name">${esc(p.name)}</span><span class="user-detail">Sell ${fmt(p.price)} · Buy ${p.buyPrice != null ? fmt(p.buyPrice) : "—"}${p.buyPrice != null && Number(p.price) > 0 ? ` · <strong style="color:${p.price - p.buyPrice >= 0 ? "var(--green)" : "#dc2636"}">${p.price - p.buyPrice >= 0 ? "Profit" : "Loss"} ${fmt(Math.abs(p.price - p.buyPrice))}</strong>` : ""}</span></div>
               <div style="display:flex;gap:6px">
                 <button class="icon-btn" style="color:#1677ff" onclick="UI.editingProductId='${p.id}';rerender();">\u270f\ufe0f</button>
                 <button class="icon-btn" onclick="trashProduct('${p.id}')">\ud83d\uddd1\ufe0f</button>
@@ -2051,11 +2106,9 @@ function alertRow(e) {
 
 /* ---------- SALES ---------- */
 function avgBuyPrice(itemId) {
-  const ins = STATE.stockMovements.filter((m) => m.itemId === itemId && m.type === "in" && m.price != null);
-  if (ins.length === 0) return null;
-  const totalQty = ins.reduce((s, m) => s + m.qty, 0);
-  const totalCost = ins.reduce((s, m) => s + m.qty * m.price, 0);
-  return totalQty > 0 ? totalCost / totalQty : null;
+  const c = stockCache();
+  const q = c.inQty[itemId];
+  return q > 0 ? c.inCost[itemId] / q : null;
 }
 
 function startNewSale() {
@@ -2065,19 +2118,55 @@ function startNewSale() {
 function setSaleField(field, value) {
   if (!UI.saleForm) startNewSale();
   UI.saleForm[field] = value;
+  if (TYPING_FIELDS.includes(field)) return;
   rerender();
+}
+function saleStockItem(f, name) {
+  const n = (name || "").trim().toLowerCase();
+  return STATE.stockItems.find((it) => it.name.toLowerCase() === n && (it.store || "dukani") === f.store);
+}
+function saleRowHint(f, r) {
+  if (!r.itemName.trim()) return "";
+  const stockItem = saleStockItem(f, r.itemName);
+  if (!stockItem) return `<span style="color:#dc2636">⚠️ Not found in ${f.store === "godown" ? "Godown" : "Dukani"} stock</span>`;
+  const available = qtyOf(stockItem.id);
+  const buyP = buyPriceOf(stockItem);
+  let txt = `${available} in stock`;
+  if (buyP == null) return txt + " · no buying price on record (set it in Products or when receiving)";
+  txt += ` · bought at ${fmt(buyP)}`;
+  const sell = Number(r.price) || 0, qty = Number(r.qty) || 0;
+  if (sell > 0) {
+    const per = sell - buyP;
+    const col = per >= 0 ? "var(--green)" : "#dc2636";
+    txt += ` · <strong style="color:${col}">${per >= 0 ? "Profit" : "Loss"} ${fmt(Math.abs(per))}/unit${qty > 0 ? ` (${fmt(Math.abs(per * qty))} total)` : ""}</strong>`;
+  }
+  return txt;
+}
+function refreshSaleTotals(rowId) {
+  const f = UI.saleForm;
+  const r = f.rows.find((x) => x.id === rowId);
+  if (r) {
+    setText("lt-" + rowId, fmt((Number(r.price) || 0) * (Number(r.qty) || 0)));
+    const hint = document.getElementById("slh-" + rowId);
+    if (hint) hint.innerHTML = saleRowHint(f, r);
+  }
+  setText("gt-sale", fmt(f.rows.reduce((s, x) => s + (Number(x.price) || 0) * (Number(x.qty) || 0), 0)));
 }
 function setSaleRow(rowId, field, value) {
   const f = UI.saleForm;
-  f.rows = f.rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r));
-  if (field === "itemName") {
-    const row = f.rows.find((r) => r.id === rowId);
-    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === value.trim().toLowerCase() && (it.store || "dukani") === f.store);
-    if (stockItem) {
-      const buyPrice = avgBuyPrice(stockItem.id);
-      if (buyPrice != null && !row.price) row.price = String(Math.round(buyPrice));
-    }
-  }
+  const row = f.rows.find((r) => r.id === rowId);
+  if (!row) return;
+  row[field] = value;
+  if (field === "itemName") return; // handled when you finish typing (onSaleItemChange)
+  refreshSaleTotals(rowId);
+}
+// When an item name is chosen: fill in its SELLING price from Products (you can still change it).
+function onSaleItemChange(rowId) {
+  const f = UI.saleForm;
+  const row = f.rows.find((r) => r.id === rowId);
+  if (!row) return;
+  const p = productByName(row.itemName);
+  if (p && Number(p.price) > 0 && !row.price) row.price = String(p.price);
   rerender();
 }
 function addSaleRow() {
@@ -2124,24 +2213,19 @@ function renderSalesPage() {
         <span>Item</span><span>Price</span><span>Qty</span><span>Total</span><span></span>
       </div>
       ${f.rows.map((r) => {
-        const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
-        const available = stockItem ? qtyOf(stockItem.id) : null;
-        const buyP = stockItem ? avgBuyPrice(stockItem.id) : null;
         const lineTotal = (Number(r.price) || 0) * (Number(r.qty) || 0);
         return `
         <div class="item-row" style="grid-template-columns:1.4fr .9fr .6fr .9fr auto">
-          <input list="product-datalist" id="slr-name-${r.id}" class="field field-sm" placeholder="Type item name" value="${esc(r.itemName)}" oninput="setSaleRow('${r.id}','itemName',this.value)">
+          <input list="product-datalist" id="slr-name-${r.id}" class="field field-sm" placeholder="Type item name" value="${esc(r.itemName)}" oninput="setSaleRow('${r.id}','itemName',this.value)" onchange="onSaleItemChange('${r.id}')">
           <input id="slr-price-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Selling price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setSaleRow('${r.id}','price',this.value)">
           <input id="slr-qty-${r.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setSaleRow('${r.id}','qty',this.value)">
-          <span class="item-line-total">${fmt(lineTotal)}</span>
+          <span class="item-line-total" id="lt-${r.id}">${fmt(lineTotal)}</span>
           ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeSaleRow('${r.id}')">🗑️</button>` : `<span></span>`}
         </div>
-        ${r.itemName.trim() ? `<div style="font-size:10.5px;color:${available == null ? "#dc2636" : "#8290a4"};margin:-4px 0 6px 2px">
-          ${available == null ? `⚠️ Not found in ${UI.salesStore === "godown" ? "Godown" : "Dukani"} stock` : `${available} in stock${buyP != null ? ` · bought at ${fmt(buyP)} (edit price above to your selling price)` : " · no buying price on record for this item"}`}
-        </div>` : ""}`;
+        <div id="slh-${r.id}" style="font-size:10.5px;color:#8290a4;margin:-4px 0 6px 2px">${saleRowHint(f, r)}</div>`;
       }).join("")}
       <button class="add-row-btn" onclick="addSaleRow()">＋ Add Item</button>
-      <div class="grand-total-row"><span>Grand Total</span><span>${fmt(grandTotal)}</span></div>
+      <div class="grand-total-row"><span>Grand Total</span><span id="gt-sale">${fmt(grandTotal)}</span></div>
     </div>
     ${UI.saleMsg ? `<p class="settings-msg ${UI.saleMsg.ok ? "ok" : "err"}">${esc(UI.saleMsg.text)}</p>` : ""}
     <button class="btn btn-primary" style="margin-top:10px" onclick="submitSale()">Record Sale</button>
@@ -2252,18 +2336,20 @@ function submitSale() {
   const validRows = f.rows.filter((r) => r.itemName.trim() && Number(r.price) > 0 && Number(r.qty) > 0);
   if (validRows.length === 0) { UI.saleMsg = { ok: false, text: "Add at least one item with a price and quantity." }; return rerender(); }
 
+  const wanted = {};
   for (const r of validRows) {
-    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
+    const stockItem = saleStockItem(f, r.itemName);
     if (!stockItem) { UI.saleMsg = { ok: false, text: `"${r.itemName}" was not found in ${f.store === "godown" ? "Godown" : "Dukani"} stock.` }; return rerender(); }
+    wanted[stockItem.id] = (wanted[stockItem.id] || 0) + Number(r.qty);
     const available = qtyOf(stockItem.id);
-    if (Number(r.qty) > available) { UI.saleMsg = { ok: false, text: `Only ${available} of "${r.itemName}" in stock.` }; return rerender(); }
+    if (wanted[stockItem.id] > available) { UI.saleMsg = { ok: false, text: `Only ${available} of "${r.itemName}" in stock.` }; return rerender(); }
   }
 
   validRows.forEach((r) => {
-    const stockItem = STATE.stockItems.find((it) => it.name.toLowerCase() === r.itemName.trim().toLowerCase() && (it.store || "dukani") === f.store);
+    const stockItem = saleStockItem(f, r.itemName);
     const qty = Number(r.qty);
     const price = Number(r.price);
-    const buyPrice = avgBuyPrice(stockItem.id);
+    const buyPrice = buyPriceOf(stockItem);
     const movementId = uid();
     STATE.stockMovements.push({ id: movementId, itemId: stockItem.id, type: "out", qty, destination: "Sale", date: f.date });
     STATE.sales.push({
@@ -2279,10 +2365,11 @@ function submitSale() {
   rerender();
 }
 function deleteSale(id) {
-  if (!confirm("Delete this sale? This will also put the stock back.")) return;
+  if (!confirm("Delete this sale record?\n\nStock will NOT come back — the items stay sold/out of stock.")) return;
   const sale = STATE.sales.find((s) => s.id === id);
   if (sale && sale.movementId) {
-    STATE.stockMovements = STATE.stockMovements.filter((m) => m.id !== sale.movementId);
+    // keep the stock movement (so stock stays reduced) but hide it from the lists
+    STATE.stockMovements = STATE.stockMovements.map((m) => (m.id === sale.movementId ? { ...m, hidden: true } : m));
     saveStockMovements();
   }
   STATE.sales = STATE.sales.filter((s) => s.id !== id);
@@ -2361,17 +2448,18 @@ function renderReports() {
   const to = UI.plTo || "9999-12-31";
   const salesInRange = STATE.sales.filter((s) => s.date >= from && s.date <= to).sort((a, b) => (a.date < b.date ? 1 : -1));
   const revenue = salesInRange.reduce((s, x) => s + x.total, 0);
-  const cost = salesInRange.reduce((s, x) => s + (x.buyPrice != null ? x.buyPrice * x.qty : 0), 0);
-  const unknownCostCount = salesInRange.filter((x) => x.buyPrice == null).length;
+  const effBuy = (x) => (x.buyPrice != null ? x.buyPrice : buyPriceOf(itemById(x.itemId)));
+  const cost = salesInRange.reduce((s, x) => { const b = effBuy(x); return s + (b != null ? b * x.qty : 0); }, 0);
+  const unknownCostCount = salesInRange.filter((x) => effBuy(x) == null).length;
   const profit = revenue - cost;
 
   const totalCapital = STATE.stockItems.reduce((s, it) => {
     const qty = qtyOf(it.id);
-    const avg = avgBuyPrice(it.id);
+    const avg = buyPriceOf(it);
     return s + (qty > 0 && avg != null ? qty * avg : 0);
   }, 0);
-  const capitalDukani = storeItems("dukani").reduce((s, it) => { const q = qtyOf(it.id); const a = avgBuyPrice(it.id); return s + (q > 0 && a != null ? q * a : 0); }, 0);
-  const capitalGodown = storeItems("godown").reduce((s, it) => { const q = qtyOf(it.id); const a = avgBuyPrice(it.id); return s + (q > 0 && a != null ? q * a : 0); }, 0);
+  const capitalDukani = storeItems("dukani").reduce((s, it) => { const q = qtyOf(it.id); const a = buyPriceOf(it); return s + (q > 0 && a != null ? q * a : 0); }, 0);
+  const capitalGodown = storeItems("godown").reduce((s, it) => { const q = qtyOf(it.id); const a = buyPriceOf(it); return s + (q > 0 && a != null ? q * a : 0); }, 0);
 
   function setPreset(days) {
     const to = new Date();
@@ -2448,8 +2536,8 @@ function renderReports() {
             <td style="padding:8px 6px">${esc(s.itemName)}</td>
             <td style="padding:8px 6px;text-align:right">${s.qty}</td>
             <td style="padding:8px 6px;text-align:right">${fmt(s.sellPrice)}</td>
-            <td style="padding:8px 6px;text-align:right">${s.buyPrice != null ? fmt(s.buyPrice) : "—"}</td>
-            <td style="padding:8px 6px;text-align:right;font-weight:600;color:${s.buyPrice != null ? "var(--green)" : "#a3aebe"}">${s.buyPrice != null ? fmt((s.sellPrice - s.buyPrice) * s.qty) : "—"}</td>
+            <td style="padding:8px 6px;text-align:right">${effBuy(s) != null ? fmt(effBuy(s)) : "—"}</td>
+            <td style="padding:8px 6px;text-align:right;font-weight:600;color:${effBuy(s) == null ? "#a3aebe" : (s.sellPrice - effBuy(s)) >= 0 ? "var(--green)" : "#dc2636"}">${effBuy(s) != null ? ((s.sellPrice - effBuy(s)) < 0 ? "−" : "") + fmt(Math.abs((s.sellPrice - effBuy(s)) * s.qty)) : "—"}</td>
             <td style="padding:8px 6px;text-align:right;color:#8290a4">${s.date}</td>
           </tr>`).join("")}
       </tbody>
@@ -2585,7 +2673,7 @@ function renderEntryForm(kind) {
 
   return `
   <div class="entry-form">
-    <input id="ef-name" class="field" placeholder="Name" value="${esc(f.name)}" oninput="setFormField('${kind}','name',this.value)">
+    <input id="ef-name" class="field" placeholder="Name" value="${esc(f.name)}" oninput="setFormField('${kind}','name',this.value)" onchange="rerender()">
     ${match ? `
       <div class="reminder-bar" style="margin:0;padding:10px 12px">
         <div style="font-size:12.5px">⚠️ <strong>${esc(match.name)}</strong> already has an account here — balance: <strong>${fmt(balanceOf(match))}</strong>. This will be <strong>added to that account</strong>.</div>
@@ -2621,11 +2709,11 @@ function renderEntryForm(kind) {
               <input id="row-dp-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Discounted Price" value="${esc(r.discountPrice)}" oninput="this.value=sanitizeNum(this.value);setRowField('${kind}','${r.id}','discountPrice',this.value)">
             `}
             <input id="row-qty-${r.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setRowField('${kind}','${r.id}','qty',this.value)">
-            <span class="item-line-total">${fmt(lineTotalOf(r, f.discountMode))}</span>
+            <span class="item-line-total" id="lt-${r.id}">${fmt(lineTotalOf(r, f.discountMode))}</span>
             ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeRow('${kind}','${r.id}')">🗑️</button>` : `<span></span>`}
           </div>`).join("")}
         <button class="add-row-btn" onclick="addRow('${kind}')">＋ Add Item</button>
-        <div class="grand-total-row"><span>Grand Total</span><span>${fmt(grandTotal)}</span></div>
+        <div class="grand-total-row"><span>Grand Total</span><span id="gt-entry-${kind}">${fmt(grandTotal)}</span></div>
       </div>
     `}
     <input id="ef-note" class="field" placeholder="Note (optional)" value="${esc(f.note)}" oninput="setFormField('${kind}','note',this.value)">
@@ -2638,19 +2726,27 @@ function renderEntryForm(kind) {
   </div>`;
 }
 
+const TYPING_FIELDS = ["name", "phone", "note", "amount", "dueDate", "customer", "date", "supplier", "ref", "destination", "price", "qty", "itemName"];
 function setFormField(kind, field, value) {
   const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
   UI[key][field] = value;
+  if (TYPING_FIELDS.includes(field)) return; // just remember it — no full redraw while typing
   rerender();
 }
 function setRowField(kind, rowId, field, value) {
   const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
-  UI[key].rows = UI[key].rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r));
-  rerender();
+  const f = UI[key];
+  const row = f.rows.find((r) => r.id === rowId);
+  if (row) row[field] = value;
+  if (field === "name") return;
+  if (row) setText("lt-" + rowId, fmt(lineTotalOf(row, f.discountMode)));
+  setText("gt-entry-" + kind, fmt(f.rows.reduce((s, r) => s + lineTotalOf(r, f.discountMode), 0)));
 }
 function onRowNameChange(kind, rowId, name) {
-  const p = STATE.products.find((p) => p.name.toLowerCase() === name.trim().toLowerCase());
-  if (p) setRowField(kind, rowId, "price", String(p.price));
+  const p = productByName(name);
+  const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
+  const row = UI[key] && UI[key].rows.find((r) => r.id === rowId);
+  if (p && row) { row.price = String(p.price); rerender(); }
 }
 function addRow(kind) {
   const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
@@ -2871,16 +2967,25 @@ function startEditCharge(entryId, chargeId) {
   rerender();
 }
 function cancelAddCharge() { UI.addChargeTo = null; UI.editingChargeId = null; rerender(); }
-function setChargeField(field, value) { UI.addChargeTo[field] = value; rerender(); }
+function setChargeField(field, value) {
+  UI.addChargeTo[field] = value;
+  if (TYPING_FIELDS.includes(field)) return;
+  rerender();
+}
 function setChargeRow(rowId, field, value) {
   const f = UI.addChargeTo;
-  f.rows = f.rows.map((r) => (r.id === rowId ? { ...r, [field]: value } : r));
-  if (field === "name") {
-    const p = STATE.products.find((p) => p.name.toLowerCase() === value.trim().toLowerCase());
-    const row = f.rows.find((r) => r.id === rowId);
-    if (p && !row.price) row.price = String(p.price);
-  }
-  rerender();
+  const row = f.rows.find((r) => r.id === rowId);
+  if (row) row[field] = value;
+  if (field === "name") return;
+  if (row) setText("lt-" + rowId, fmt(lineTotalOf(row, f.discountMode)));
+  setText("gt-charge", fmt(f.rows.reduce((s, r) => s + lineTotalOf(r, f.discountMode), 0)));
+}
+function onChargeRowNameChange(rowId) {
+  const f = UI.addChargeTo;
+  const row = f && f.rows.find((r) => r.id === rowId);
+  if (!row) return;
+  const p = productByName(row.name);
+  if (p && !row.price) { row.price = String(p.price); rerender(); }
 }
 function addChargeRow() { UI.addChargeTo.rows.push({ id: uid(), name: "", price: "", discountPrice: "", discountPercent: "", qty: "1" }); rerender(); }
 function removeChargeRow(rowId) { UI.addChargeTo.rows = UI.addChargeTo.rows.filter((r) => r.id !== rowId); rerender(); }
@@ -2902,7 +3007,7 @@ function renderAddChargeForm(entryId, isEdit) {
       <button class="mode-btn ${f.mode === "items" ? "active" : ""}" onclick="setChargeField('mode','items')">☰ Itemized</button>
     </div>
     ${f.mode === "simple" ? `
-      <input class="field" type="text" inputmode="decimal" placeholder="Amount (TSh)" value="${esc(f.amount)}" oninput="this.value=sanitizeNum(this.value);setChargeField('amount',this.value)">
+      <input id="cf-amount" class="field" type="text" inputmode="decimal" placeholder="Amount (TSh)" value="${esc(f.amount)}" oninput="this.value=sanitizeNum(this.value);setChargeField('amount',this.value)">
     ` : `
       <div class="items-block">
         <div class="item-row item-row-head">
@@ -2910,18 +3015,18 @@ function renderAddChargeForm(entryId, isEdit) {
         </div>
         ${f.rows.map((r) => `
           <div class="item-row">
-            <input list="product-datalist" class="field field-sm" placeholder="Item" value="${esc(r.name)}" oninput="setChargeRow('${r.id}','name',this.value)">
-            <input class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','price',this.value)">
-            <input class="field field-sm" type="text" inputmode="decimal" placeholder="Discounted Price" value="${esc(r.discountPrice)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','discountPrice',this.value)">
-            <input class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','qty',this.value)">
-            <span class="item-line-total">${fmt(lineTotalOf(r, f.discountMode))}</span>
+            <input list="product-datalist" id="cr-name-${r.id}" class="field field-sm" placeholder="Item" value="${esc(r.name)}" oninput="setChargeRow('${r.id}','name',this.value)" onchange="onChargeRowNameChange('${r.id}')">
+            <input id="cr-price-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Price" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','price',this.value)">
+            <input id="cr-dp-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Discounted Price" value="${esc(r.discountPrice)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','discountPrice',this.value)">
+            <input id="cr-qty-${r.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setChargeRow('${r.id}','qty',this.value)">
+            <span class="item-line-total" id="lt-${r.id}">${fmt(lineTotalOf(r, f.discountMode))}</span>
             ${f.rows.length > 1 ? `<button class="icon-btn" onclick="removeChargeRow('${r.id}')">🗑️</button>` : `<span></span>`}
           </div>`).join("")}
         <button class="add-row-btn" onclick="addChargeRow()">＋ Add Item</button>
-        <div class="grand-total-row"><span>Total</span><span>${fmt(grandTotal)}</span></div>
+        <div class="grand-total-row"><span>Total</span><span id="gt-charge">${fmt(grandTotal)}</span></div>
       </div>
     `}
-    <input class="field" placeholder="Note (optional)" value="${esc(f.note)}" oninput="setChargeField('note',this.value)">
+    <input id="cf-note" class="field" placeholder="Note (optional)" value="${esc(f.note)}" oninput="setChargeField('note',this.value)">
     <div class="form-actions">
       <button class="btn btn-ghost" onclick="cancelAddCharge()">Cancel</button>
       <button class="btn btn-primary" onclick="${isEdit ? `saveEditedCharge('${entryId}')` : `submitAddCharge('${entryId}')`}">Save</button>
@@ -2975,66 +3080,71 @@ function guessCategory(name) {
   return "Normal";
 }
 
-function qtyOf(itemId) {
-  return STATE.stockMovements
-    .filter((m) => m.itemId === itemId)
-    .reduce((s, m) => s + (m.type === "in" ? m.qty : -m.qty), 0);
+/* ---------- fast stock math ----------
+   Stock is the sum of ALL movements, including ones you deleted from the lists
+   (deleted records are only hidden — the stock they moved stays moved).
+   Results are cached and only recalculated when movements change. */
+let _qtyCache = null, _qtyRef = null, _qtyLen = -1;
+function invalidateStock() { _qtyCache = null; }
+function stockCache() {
+  const ref = STATE.stockMovements;
+  if (_qtyCache && _qtyRef === ref && _qtyLen === ref.length) return _qtyCache;
+  const qty = {}, inQty = {}, inCost = {};
+  for (const m of ref) {
+    qty[m.itemId] = (qty[m.itemId] || 0) + (m.type === "in" ? m.qty : -m.qty);
+    if (m.type === "in" && m.price != null) {
+      inQty[m.itemId] = (inQty[m.itemId] || 0) + m.qty;
+      inCost[m.itemId] = (inCost[m.itemId] || 0) + m.qty * m.price;
+    }
+  }
+  _qtyCache = { qty, inQty, inCost };
+  _qtyRef = ref; _qtyLen = ref.length;
+  return _qtyCache;
+}
+function qtyOf(itemId) { return stockCache().qty[itemId] || 0; }
+function visibleMovements(list) { return list.filter((m) => !m.hidden); }
+
+function productByName(name) {
+  const n = (name || "").trim().toLowerCase();
+  return STATE.products.find((p) => !p.deleted && p.name.toLowerCase() === n) || null;
+}
+/* Buying price used for profit/loss: the latest price you entered (when receiving
+   from a supplier, or edited on the Products page). Falls back to the average of
+   past deliveries if no direct price was ever set. */
+function buyPriceOf(item) {
+  if (!item) return null;
+  if (item.buyPrice != null && item.buyPrice !== "") return Number(item.buyPrice);
+  const p = productByName(item.name);
+  if (p && p.buyPrice != null && p.buyPrice !== "") return Number(p.buyPrice);
+  return avgBuyPrice(item.id);
+}
+// Copies a buying price everywhere the same item name appears (Products + both stores).
+function setBuyPriceEverywhere(name, price) {
+  const n = name.trim().toLowerCase();
+  STATE.stockItems = STATE.stockItems.map((it) => (it.name.toLowerCase() === n ? { ...it, buyPrice: price } : it));
+  let p = productByName(name);
+  if (p) {
+    STATE.products = STATE.products.map((x) => (x.id === p.id ? { ...x, buyPrice: price } : x));
+  } else {
+    STATE.products.push({ id: uid(), name: name.trim(), price: 0, buyPrice: price });
+  }
 }
 function isLowStock(item) {
   return item.lowStockLimit != null && item.lowStockLimit !== "" && qtyOf(item.id) <= Number(item.lowStockLimit);
 }
 function isZeroStock(item) { return qtyOf(item.id) <= 0; }
 function storeItems(store) { return STATE.stockItems.filter((it) => (it.store || "dukani") === store); }
+// Movements shown in the lists (deleted ones are hidden, but still count in stock).
 function storeMovements(store) {
   const ids = new Set(storeItems(store).map((it) => it.id));
-  return STATE.stockMovements.filter((m) => ids.has(m.itemId));
+  return STATE.stockMovements.filter((m) => ids.has(m.itemId) && !m.hidden);
 }
+function itemById(id) { return STATE.stockItems.find((it) => it.id === id); }
 function lowStockCount(store) {
   return storeItems(store).filter((it) => isLowStock(it) && !isZeroStock(it)).length;
 }
 function zeroStockCount(store) {
   return storeItems(store).filter((it) => isZeroStock(it)).length;
-}
-
-function renderStockByCategory() {
-  const search = (UI.stockSearch || "").trim().toLowerCase();
-  const items = STATE.stockItems.filter((it) => !search || it.name.toLowerCase().includes(search));
-  const groups = {};
-  items.forEach((it) => { (groups[it.category] = groups[it.category] || []).push(it); });
-  const cats = Object.keys(groups).sort();
-  if (cats.length === 0) return `<p class="empty-note">No items match "${esc(UI.stockSearch)}".</p>`;
-  const forceOpen = !!search;
-  return cats.map((cat) => {
-    const list = groups[cat].sort((a, b) => a.name.localeCompare(b.name));
-    const isOpen = forceOpen || UI.openStockCategories[cat];
-    return `
-    <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">
-      <button class="history-toggle" style="width:100%;justify-content:space-between;padding:10px 12px;margin:0" onclick="UI.openStockCategories['${cat}']=!UI.openStockCategories['${cat}'];rerender();">
-        <span>📁 ${esc(cat)} (${list.length})</span>
-        <span>${isOpen ? "▲" : "▼"}</span>
-      </button>
-      ${isOpen ? `
-      <table class="recent-table" style="width:100%">
-        <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
-        <tbody>
-          ${list.map((it) => `
-            <tr>
-              <td style="padding:8px 6px">${esc(it.name)}</td>
-              <td style="padding:8px 6px;text-align:right;font-weight:700;${isLowStock(it) ? "color:#dc2636" : ""}">${qtyOf(it.id)}</td>
-              <td style="padding:8px 6px;text-align:right">
-                ${UI.editingLimitId === it.id ? `
-                  <input id="limit-${it.id}" class="field field-sm" style="width:70px;display:inline-block" type="text" inputmode="numeric" value="${esc(it.lowStockLimit ?? "")}" oninput="this.value=sanitizeNum(this.value)">
-                  <button class="btn btn-sm btn-primary" onclick="saveLimit('${it.id}')">Save</button>
-                ` : `
-                  ${it.lowStockLimit ?? "—"} <button class="icon-btn" onclick="UI.editingLimitId='${it.id}';rerender();">✏️</button>
-                `}
-              </td>
-              <td style="padding:8px 6px">${isLowStock(it) ? `<span class="badge pending">Low Stock</span>` : `<span class="badge paid">OK</span>`}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>` : ""}
-    </div>`;
-  }).join("");
 }
 
 function renderMainStorePage(store) {
@@ -3062,14 +3172,16 @@ function renderMainStorePage(store) {
 
   <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${receiveOpen ? "0" : "10px"};flex-wrap:wrap;gap:8px">
-      <h3 style="margin:0">📥 Receive Stock — ${label}</h3>
-      ${!receiveOpen ? `<div style="display:flex;gap:8px">
-        <button class="btn btn-sm btn-primary" onclick="startReceiveStock('${store}')">📥 Receive Stock</button>
+      <h3 style="margin:0">📥 Pokea Mzigo — ${label}</h3>
+      ${!receiveOpen ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" onclick="startReceiveStock('${store}')">📥 Pokea Mzigo (from Supplier)</button>
         <button class="btn btn-sm btn-ghost" onclick="seedAllProducts('${store}')">🌱 Stock All Products (100 each)</button>
       </div>` : ""}
     </div>
     ${receiveOpen ? renderReceiveForm() : ""}
   </div>
+
+  ${renderDeliveriesPanel(store)}
 
   ${store === "godown" ? `
   <div class="panel" style="margin-top:16px">
@@ -3082,14 +3194,14 @@ function renderMainStorePage(store) {
 
   <div class="panel" style="margin-top:16px">
     <h3 style="margin:0 0 10px">Current Stock — ${label}</h3>
-    <input id="stock-search-input-${store}" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search item..." value="${esc(UI.stockSearch || "")}" oninput="UI.stockSearch=this.value;rerender();">
+    <input id="stock-search-input-${store}" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search item..." value="${esc(UI.stockSearch || "")}" oninput="UI.stockSearch=this.value;softRerender();">
     ${items.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : renderStockByCategory(store)}
   </div>
 
   <div class="panel" style="margin-top:16px">
     <h3>📥 All Received — ${label} (${storeMovements(store).filter((m) => m.type === "in").length})</h3>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <input id="received-search-input-${store}" class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.receivedSearch || "")}" oninput="UI.receivedSearch=this.value;rerender();">
+      <input id="received-search-input-${store}" class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.receivedSearch || "")}" oninput="UI.receivedSearch=this.value;softRerender();">
       <label style="font-size:12px;color:#6b7280">📅 Date:</label>
       <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.stockDateFilter || "")}" onchange="UI.stockDateFilter=this.value;rerender();">
       ${UI.stockDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.stockDateFilter='';rerender();">Clear</button>` : ""}
@@ -3101,7 +3213,7 @@ function renderMainStorePage(store) {
   <div class="panel" style="margin-top:16px">
     <h3>📤 All Dispatched — Godown (${storeMovements(store).filter((m) => m.type === "out").length})</h3>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <input id="dispatch-search-input-${store}" class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.dispatchSearch || "")}" oninput="UI.dispatchSearch=this.value;rerender();">
+      <input id="dispatch-search-input-${store}" class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.dispatchSearch || "")}" oninput="UI.dispatchSearch=this.value;softRerender();">
       <label style="font-size:12px;color:#6b7280">📅 Date:</label>
       <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.dispatchDateFilter || "")}" onchange="UI.dispatchDateFilter=this.value;rerender();">
       ${UI.dispatchDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.dispatchDateFilter='';rerender();">Clear</button>` : ""}
@@ -3149,7 +3261,7 @@ function renderStockByCategory(store) {
       </button>
       ${isOpen ? `
       <table class="recent-table" style="width:100%">
-        <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
+        <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Buying Price</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
         <tbody>
           ${list.map((it) => `
             <tr>
@@ -3164,6 +3276,7 @@ function renderStockByCategory(store) {
                   <span class="badge pending">${esc(it.category)}</span> <button class="icon-btn" style="color:#1677ff" onclick="UI.editingCategoryId='${it.id}';rerender();">✏️</button>
                 `}
               </td>
+              <td style="padding:8px 6px;text-align:right;color:#6b7280">${buyPriceOf(it) != null ? fmt(buyPriceOf(it)) : "—"}</td>
               <td style="padding:8px 6px;text-align:right;font-weight:700;${isZeroStock(it) ? "color:#dc2636" : isLowStock(it) ? "color:#b8862f" : ""}">${qtyOf(it.id)}</td>
               <td style="padding:8px 6px;text-align:right">
                 ${UI.editingLimitId === it.id ? `
@@ -3248,7 +3361,7 @@ function renderMovementsTable(list) {
         return `<tr>
           <td>${item ? esc(item.name) : "—"}</td>
           <td class="rt-amount">${m.qty}</td>
-          <td>${m.type === "in" ? esc(m.supplier || "") : esc(m.destination || "")}${m.type === "out" && m.price != null ? ` · ${fmt(m.price)}` : ""}</td>
+          <td>${m.type === "in" ? esc(m.supplier || "") : esc(m.destination || "")}${m.price != null ? ` · ${fmt(m.price)}` : ""}</td>
           <td class="rt-date">${m.date}</td>
           <td style="white-space:nowrap">
             <button class="icon-btn" style="color:#1677ff" onclick="UI.editingMovementId='${m.id}';rerender();">✏️</button>
@@ -3274,62 +3387,329 @@ function saveMovementEdit(id) {
     updated.price = priceVal2 ? Number(priceVal2) : null;
   }
   STATE.stockMovements = STATE.stockMovements.map((x) => (x.id === id ? updated : x));
+  if (m.type === "in" && updated.price != null && updated.supplier !== "Godown Transfer") {
+    const item = itemById(m.itemId);
+    if (item) { setBuyPriceEverywhere(item.name, updated.price); saveStockItems(); saveProducts(); }
+  }
   saveStockMovements();
   UI.editingMovementId = null;
   rerender();
 }
 function deleteMovement(id) {
-  if (!confirm("Delete this record? Stock quantity will be recalculated.")) return;
-  STATE.stockMovements = STATE.stockMovements.filter((m) => m.id !== id);
+  if (!confirm("Delete this record from the list?\n\nStock will NOT change — it stays exactly as it is now. (To correct a wrong quantity, use ✏️ Edit instead.)")) return;
+  STATE.stockMovements = STATE.stockMovements.map((m) => (m.id === id ? { ...m, hidden: true } : m));
   saveStockMovements();
   rerender();
 }
 
+/* =====================================================================
+   POKEA MZIGO — receive a supplier's delivery (many items at once)
+   ===================================================================== */
+function newDeliveryRow() { return { id: uid(), name: "", price: "", qty: "", category: "" }; }
 function startReceiveStock(store) {
-  UI.stockForm = { store, name: "", category: STOCK_CATEGORIES[0], qty: "", supplier: "", date: todayStr(), price: "", lowStockLimit: "" };
+  UI.stockForm = { store, supplier: "", date: todayStr(), ref: "", note: "", rows: [newDeliveryRow(), newDeliveryRow(), newDeliveryRow()] };
+  UI.deliveryMsg = null;
   rerender();
+}
+function deliveryRowTotal(r) { return (Number(r.price) || 0) * (Number(r.qty) || 0); }
+function deliveryRowHint(f, r) {
+  if (!r.name.trim()) return "";
+  const item = storeItems(f.store).find((it) => it.name.toLowerCase() === r.name.trim().toLowerCase());
+  if (item) {
+    const bp = buyPriceOf(item);
+    let t = `In stock: ${qtyOf(item.id)}${bp != null ? ` · last buying price ${fmt(bp)}` : ""}`;
+    const p = Number(r.price);
+    if (bp != null && p > 0 && p !== bp) t += ` · <strong style="color:${p > bp ? "#dc2636" : "var(--green)"}">${p > bp ? "▲ higher" : "▼ lower"} than last time</strong>`;
+    return t;
+  }
+  const cat = r.category || guessCategory(r.name);
+  return `🆕 New item · Category:
+    <select class="field field-sm" style="width:auto;display:inline-block;padding:2px 6px;height:auto" onchange="setDeliveryRow('${r.id}','category',this.value)">
+      ${STOCK_CATEGORIES.map((c) => `<option value="${c}" ${cat === c ? "selected" : ""}>${c}</option>`).join("")}
+    </select>`;
 }
 function renderReceiveForm() {
   const f = UI.stockForm;
+  const total = f.rows.reduce((s, r) => s + deliveryRowTotal(r), 0);
+  const count = f.rows.filter((r) => r.name.trim() && Number(r.qty) > 0).length;
+  const cols = "grid-template-columns:1.6fr 1fr .6fr 1fr auto";
   return `
   <div class="entry-form" style="margin-top:12px">
-    <input list="product-datalist" id="rs-name" class="field" placeholder="Item name" value="${esc(f.name)}" oninput="setStockField('name',this.value)">
-    <div class="discount-mode-toggle" style="flex-wrap:wrap">
-      <span>Category:</span>
-      ${STOCK_CATEGORIES.map((c) => `<button class="chip-btn ${f.category === c ? "active" : ""}" onclick="setStockField('category','${c}')">${c}</button>`).join("")}
+    <label class="due-label">🚚 Supplier (aliyeleta mzigo)</label>
+    <input list="supplier-datalist" id="dl-supplier" class="field" placeholder="Supplier name" value="${esc(f.supplier)}" oninput="setDeliveryField('supplier',this.value)">
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div style="flex:1 1 150px">
+        <label class="due-label">📅 Date received</label>
+        <input id="dl-date" class="field" type="date" value="${esc(f.date)}" oninput="setDeliveryField('date',this.value)">
+      </div>
+      <div style="flex:1 1 150px">
+        <label class="due-label">🧾 Invoice / Ref No. (optional)</label>
+        <input id="dl-ref" class="field" placeholder="e.g. INV-2041" value="${esc(f.ref)}" oninput="setDeliveryField('ref',this.value)">
+      </div>
     </div>
-    <input id="rs-qty" class="field" type="text" inputmode="numeric" placeholder="Quantity received" value="${esc(f.qty)}" oninput="this.value=sanitizeNum(this.value);setStockField('qty',this.value)">
-    <input id="rs-supplier" class="field" placeholder="From (supplier)" value="${esc(f.supplier)}" oninput="setStockField('supplier',this.value)">
-    <label class="due-label">📅 Date received</label>
-    <input id="rs-date" class="field" type="date" value="${esc(f.date)}" oninput="setStockField('date',this.value)">
-    <input id="rs-price" class="field" type="text" inputmode="decimal" placeholder="Price per unit (optional)" value="${esc(f.price)}" oninput="this.value=sanitizeNum(this.value);setStockField('price',this.value)">
-    <input id="rs-limit" class="field" type="text" inputmode="numeric" placeholder="Low-stock alert limit (optional)" value="${esc(f.lowStockLimit)}" oninput="this.value=sanitizeNum(this.value);setStockField('lowStockLimit',this.value)">
+    <div class="items-block" style="margin-top:6px">
+      <div class="item-row item-row-head" style="${cols}">
+        <span>Item</span><span>Buying price</span><span>Qty</span><span>Total</span><span></span>
+      </div>
+      ${f.rows.map((r) => `
+        <div class="item-row" style="${cols}">
+          <input list="product-datalist" id="dr-name-${r.id}" class="field field-sm" placeholder="Item name" value="${esc(r.name)}" oninput="setDeliveryRow('${r.id}','name',this.value)" onchange="onDeliveryItemChange('${r.id}')">
+          <input id="dr-price-${r.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Bei ya kununua" value="${esc(r.price)}" oninput="this.value=sanitizeNum(this.value);setDeliveryRow('${r.id}','price',this.value)">
+          <input id="dr-qty-${r.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Qty" value="${esc(r.qty)}" oninput="this.value=sanitizeNum(this.value);setDeliveryRow('${r.id}','qty',this.value)">
+          <span class="item-line-total" id="lt-${r.id}">${fmt(deliveryRowTotal(r))}</span>
+          ${f.rows.length > 1 ? `<button class="icon-btn" title="Remove row" onclick="removeDeliveryRow('${r.id}')">🗑️</button>` : `<span></span>`}
+        </div>
+        <div id="drh-${r.id}" style="font-size:10.5px;color:#8290a4;margin:-4px 0 6px 2px">${deliveryRowHint(f, r)}</div>`).join("")}
+      <button class="add-row-btn" onclick="addDeliveryRow()">＋ Add Item</button>
+      <div class="grand-total-row"><span>Grand Total (<span id="gc-delivery">${count}</span> items)</span><span id="gt-delivery">${fmt(total)}</span></div>
+    </div>
+    <input id="dl-note" class="field" placeholder="Note (optional)" value="${esc(f.note)}" oninput="setDeliveryField('note',this.value)">
+    <p style="font-size:11px;color:#6b7280;margin:2px 0">💡 The buying price you enter becomes the item's buying price everywhere (Products, stock and sales), so profit/loss is calculated automatically.</p>
+    ${UI.deliveryMsg ? `<p class="settings-msg ${UI.deliveryMsg.ok ? "ok" : "err"}">${esc(UI.deliveryMsg.text)}</p>` : ""}
     <div class="form-actions">
-      <button class="btn btn-ghost" onclick="UI.stockForm=null;rerender();">Cancel</button>
-      <button class="btn btn-primary" onclick="submitReceiveStock()">Save</button>
+      <button class="btn btn-ghost" onclick="UI.stockForm=null;UI.deliveryMsg=null;rerender();">Cancel</button>
+      <button class="btn btn-ghost" onclick="submitDelivery(false)">💾 Save</button>
+      <button class="btn btn-primary" onclick="submitDelivery(true)">💾 Save & 🖨️ Print</button>
     </div>
   </div>`;
 }
-function setStockField(field, value) { UI.stockForm[field] = value; rerender(); }
-function submitReceiveStock() {
+function setDeliveryField(field, value) { UI.stockForm[field] = value; }
+function refreshDeliveryTotals(rowId) {
   const f = UI.stockForm;
-  if (!f.name.trim() || !f.qty) return;
-  let item = storeItems(f.store).find((it) => it.name.toLowerCase() === f.name.trim().toLowerCase());
-  if (!item) {
-    item = { id: uid(), name: f.name.trim(), category: f.category, lowStockLimit: f.lowStockLimit || null, store: f.store };
-    STATE.stockItems.push(item);
-  } else if (f.lowStockLimit) {
-    item.lowStockLimit = f.lowStockLimit;
+  const r = f.rows.find((x) => x.id === rowId);
+  if (r) {
+    setText("lt-" + rowId, fmt(deliveryRowTotal(r)));
+    const h = document.getElementById("drh-" + rowId);
+    if (h && r.name.trim() && storeItems(f.store).some((it) => it.name.toLowerCase() === r.name.trim().toLowerCase())) h.innerHTML = deliveryRowHint(f, r);
   }
-  STATE.stockMovements.push({
-    id: uid(), itemId: item.id, type: "in", qty: Number(f.qty), supplier: f.supplier.trim(),
-    date: f.date || todayStr(), price: f.price ? Number(f.price) : null,
-  });
-  saveStockItems();
-  saveStockMovements();
-  UI.stockForm = null;
+  setText("gt-delivery", fmt(f.rows.reduce((s, x) => s + deliveryRowTotal(x), 0)));
+  setText("gc-delivery", String(f.rows.filter((x) => x.name.trim() && Number(x.qty) > 0).length));
+}
+function setDeliveryRow(rowId, field, value) {
+  const f = UI.stockForm;
+  const r = f.rows.find((x) => x.id === rowId);
+  if (!r) return;
+  r[field] = value;
+  if (field === "name" || field === "category") return;
+  refreshDeliveryTotals(rowId);
+}
+// When an item is picked, suggest the last buying price (you can change it).
+function onDeliveryItemChange(rowId) {
+  const f = UI.stockForm;
+  const r = f.rows.find((x) => x.id === rowId);
+  if (!r) return;
+  if (!r.price && r.name.trim()) {
+    const item = storeItems(f.store).find((it) => it.name.toLowerCase() === r.name.trim().toLowerCase());
+    const bp = item ? buyPriceOf(item) : (productByName(r.name) || {}).buyPrice;
+    if (bp != null && bp !== "") r.price = String(Math.round(Number(bp)));
+  }
+  if (f.rows[f.rows.length - 1].id === rowId && r.name.trim()) f.rows.push(newDeliveryRow()); // always keep a spare empty row
   rerender();
 }
+function addDeliveryRow() { UI.stockForm.rows.push(newDeliveryRow()); rerender(); }
+function removeDeliveryRow(rowId) { UI.stockForm.rows = UI.stockForm.rows.filter((r) => r.id !== rowId); rerender(); }
+
+function submitDelivery(andPrint) {
+  const f = UI.stockForm;
+  UI.deliveryMsg = null;
+  const supplier = f.supplier.trim();
+  const rows = f.rows.filter((r) => r.name.trim() && Number(r.qty) > 0);
+  if (!supplier) { UI.deliveryMsg = { ok: false, text: "Enter the supplier's name." }; return rerender(); }
+  if (rows.length === 0) { UI.deliveryMsg = { ok: false, text: "Add at least one item with a quantity." }; return rerender(); }
+  const halfFilled = f.rows.filter((r) => (r.name.trim() && !(Number(r.qty) > 0)) || (!r.name.trim() && (r.qty || r.price)));
+  if (halfFilled.length) { UI.deliveryMsg = { ok: false, text: "Some rows are incomplete — every item needs a name and a quantity (or clear the row)." }; return rerender(); }
+
+  const deliveryId = uid();
+  const date = f.date || todayStr();
+  const savedRows = [];
+  rows.forEach((r) => {
+    const name = r.name.trim();
+    const qty = Number(r.qty);
+    const price = r.price !== "" ? Number(r.price) : null;
+    let item = storeItems(f.store).find((it) => it.name.toLowerCase() === name.toLowerCase());
+    if (!item) {
+      item = { id: uid(), name, category: r.category || guessCategory(name), lowStockLimit: null, store: f.store };
+      STATE.stockItems.push(item);
+    }
+    const movementId = uid();
+    STATE.stockMovements.push({ id: movementId, itemId: item.id, type: "in", qty, supplier, date, price, deliveryId });
+    if (price != null) setBuyPriceEverywhere(name, price);
+    else if (!productByName(name)) STATE.products.push({ id: uid(), name, price: 0 });
+    savedRows.push({ name, qty, price, total: (price || 0) * qty, itemId: item.id, movementId });
+  });
+  const total = savedRows.reduce((s, r) => s + r.total, 0);
+  STATE.deliveries.push({ id: deliveryId, store: f.store, supplier, date, ref: f.ref.trim(), note: f.note.trim(), rows: savedRows, total, archived: false, createdAt: Date.now() });
+
+  saveStockItems();
+  saveStockMovements();
+  saveProducts();
+  saveDeliveries();
+  UI.stockForm = null;
+  UI.deliveryListMsg = { ok: true, text: `✅ Mzigo from ${supplier} saved — ${savedRows.length} item(s), total ${fmt(total)}. Stock and buying prices updated.` };
+  if (andPrint) UI.grnId = deliveryId;
+  rerender();
+}
+
+/* ---------- supplier deliveries list + history ---------- */
+function renderDeliveriesPanel(store) {
+  const all = (STATE.deliveries || []).filter((d) => d.store === store);
+  const q = (UI.deliverySearch || "").trim().toLowerCase();
+  const match = (d) => !q || d.supplier.toLowerCase().includes(q) || (d.ref || "").toLowerCase().includes(q) || d.rows.some((r) => r.name.toLowerCase().includes(q));
+  const byDate = (a, b) => (a.date === b.date ? (b.createdAt || 0) - (a.createdAt || 0) : a.date < b.date ? 1 : -1);
+  const active = all.filter((d) => !d.archived && match(d)).sort(byDate);
+  const history = all.filter((d) => d.archived && match(d)).sort(byDate);
+  const openKey = "showDeliveryHistory" + store;
+  return `
+  <div class="panel" style="margin-top:16px">
+    <h3 style="margin:0 0 10px">🚚 Mizigo ya Suppliers — ${store === "godown" ? "Godown" : "Dukani"} (${all.filter((d) => !d.archived).length})</h3>
+    ${UI.deliveryListMsg ? `<p class="settings-msg ${UI.deliveryListMsg.ok ? "ok" : "err"}">${esc(UI.deliveryListMsg.text)}</p>` : ""}
+    <input id="delivery-search-${store}" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search supplier, item or ref..." value="${esc(UI.deliverySearch || "")}" oninput="UI.deliverySearch=this.value;softRerender();">
+    ${active.length === 0 ? `<p class="empty-note">${q ? "No deliveries match your search." : "No supplier deliveries yet. Tap 📥 Pokea Mzigo above to record one."}</p>` : active.map(renderDeliveryCard).join("")}
+    <button class="history-toggle" onclick="UI.${openKey}=!UI.${openKey};rerender();">🗄️ History (${history.length}) ${UI[openKey] ? "▲" : "▼"}</button>
+    ${UI[openKey] ? (history.length === 0 ? `<p class="empty-note">History is empty.</p>` : history.map(renderDeliveryCard).join("")) : ""}
+  </div>`;
+}
+function renderDeliveryCard(d) {
+  if (!UI.openDeliveries) UI.openDeliveries = {};
+  const open = UI.openDeliveries[d.id];
+  return `
+  <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;background:var(--paper-alt);cursor:pointer" onclick="UI.openDeliveries['${d.id}']=!UI.openDeliveries['${d.id}'];rerender();">
+      <div>
+        <strong style="font-size:13px">🚚 ${esc(d.supplier)}</strong>
+        <div style="font-size:11px;color:#8290a4">${d.date}${d.ref ? ` · Ref ${esc(d.ref)}` : ""} · ${d.rows.length} item(s)${d.archived ? " · in history" : ""}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <strong style="color:var(--green)">${fmt(d.total)}</strong>
+        <span style="color:#8290a4">${open ? "▲" : "▼"}</span>
+      </div>
+    </div>
+    ${open ? `
+    <table class="recent-table" style="width:100%">
+      <thead><tr>
+        <th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th>
+        <th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Qty</th>
+        <th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Buying price</th>
+        <th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Total</th>
+      </tr></thead>
+      <tbody>
+        ${d.rows.map((r) => `<tr>
+          <td style="padding:7px 6px">${esc(r.name)}</td>
+          <td style="padding:7px 6px;text-align:right">${r.qty}</td>
+          <td style="padding:7px 6px;text-align:right">${r.price != null ? fmt(r.price) : "—"}</td>
+          <td style="padding:7px 6px;text-align:right;font-weight:600">${fmt(r.total)}</td>
+        </tr>`).join("")}
+      </tbody>
+    </table>
+    ${d.note ? `<p style="font-size:11.5px;color:#6b7280;padding:0 12px">📝 ${esc(d.note)}</p>` : ""}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;padding:8px 12px 12px">
+      <button class="btn btn-sm btn-ghost" onclick="UI.grnId='${d.id}';rerender();">🖨️ Print</button>
+      ${d.archived
+        ? `<button class="btn btn-sm btn-ghost" onclick="archiveDelivery('${d.id}',false)">↩️ Restore</button>`
+        : `<button class="btn btn-sm btn-ghost" onclick="archiveDelivery('${d.id}',true)">🗄️ Move to History</button>`}
+      <button class="btn btn-sm btn-ghost" style="color:#dc2636" onclick="UI.deleteDeliveryId='${d.id}';rerender();">🗑️ Delete</button>
+    </div>` : ""}
+  </div>`;
+}
+function archiveDelivery(id, toHistory) {
+  STATE.deliveries = STATE.deliveries.map((d) => (d.id === id ? { ...d, archived: toHistory, archivedDate: toHistory ? todayStr() : null } : d));
+  saveDeliveries();
+  UI.deliveryListMsg = null;
+  rerender();
+}
+
+/* Delete: you choose whether the stock stays (default) or is removed because
+   the delivery was entered by mistake. */
+function deliveryStockCheck(d) {
+  const problems = [];
+  d.rows.forEach((r) => {
+    const exists = STATE.stockMovements.some((m) => m.id === r.movementId);
+    if (!exists) return;
+    const have = qtyOf(r.itemId);
+    if (have < r.qty) problems.push(`${r.name}: only ${have} left (delivery added ${r.qty})`);
+  });
+  return problems;
+}
+function renderDeleteDeliveryModal() {
+  const d = (STATE.deliveries || []).find((x) => x.id === UI.deleteDeliveryId);
+  if (!d) return "";
+  const problems = deliveryStockCheck(d);
+  return `
+  <div class="modal-overlay">
+    <div class="modal-stack" style="max-width:460px">
+      <div class="receipt-print" style="padding:20px">
+        <h3 style="margin:0 0 6px">🗑️ Delete delivery from ${esc(d.supplier)}?</h3>
+        <p style="font-size:12.5px;color:#6b7280;margin:0 0 14px">${d.date} · ${d.rows.length} item(s) · ${fmt(d.total)}</p>
+        <button class="btn btn-primary" style="width:100%;margin-bottom:8px" onclick="deleteDelivery('${d.id}','record')">Delete record only — stock stays</button>
+        <button class="btn btn-ghost" style="width:100%;margin-bottom:6px;color:#dc2636;border-color:#dc2636" ${problems.length ? "disabled" : ""} onclick="deleteDelivery('${d.id}','stock')">Delete AND remove this stock (I entered it by mistake)</button>
+        ${problems.length ? `<p style="font-size:11px;color:#dc2636;margin:0 0 8px">Can't remove the stock — some of it is already sold or moved:<br>${problems.map(esc).join("<br>")}</p>` : ""}
+        <button class="btn btn-ghost" style="width:100%" onclick="UI.deleteDeliveryId=null;rerender();">Cancel</button>
+      </div>
+    </div>
+  </div>`;
+}
+function deleteDelivery(id, mode) {
+  const d = STATE.deliveries.find((x) => x.id === id);
+  if (!d) return;
+  if (mode === "stock") {
+    if (deliveryStockCheck(d).length) return;
+    const ids = new Set(d.rows.map((r) => r.movementId));
+    STATE.stockMovements = STATE.stockMovements.filter((m) => !ids.has(m.id));
+    saveStockMovements();
+  }
+  STATE.deliveries = STATE.deliveries.filter((x) => x.id !== id);
+  saveDeliveries();
+  UI.deleteDeliveryId = null;
+  UI.deliveryListMsg = { ok: true, text: mode === "stock" ? "Delivery deleted and its stock removed." : "Delivery record deleted. Stock was not changed." };
+  rerender();
+}
+
+/* ---------- printable Goods Received Note ---------- */
+function renderGrnModal() {
+  const d = (STATE.deliveries || []).find((x) => x.id === UI.grnId);
+  if (!d) return "";
+  return `
+  <div class="modal-overlay">
+    <div class="modal-stack" style="max-width:560px">
+      <div class="receipt-print">
+        <div style="text-align:center;margin-bottom:14px">
+          <div style="display:flex;justify-content:center;margin-bottom:6px">${companyLogo(48)}</div>
+          <h2 style="margin:0">E.E.MSANGO COMPANY LIMITED</h2>
+          <p style="font-size:11.5px;color:#6b7280;margin-top:4px">TIN NO: 118-065-771 &nbsp;·&nbsp; P.O. Box, Arusha</p>
+          <p style="font-size:13px;font-weight:700;margin-top:8px;text-decoration:underline">GOODS RECEIVED NOTE</p>
+        </div>
+        <div class="receipt-meta" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 16px">
+          <div>Supplier: <strong>${esc(d.supplier)}</strong></div>
+          <div>Date: ${d.date}</div>
+          <div>Store: ${d.store === "godown" ? "Godown" : "Dukani"}</div>
+          ${d.ref ? `<div>Ref No: ${esc(d.ref)}</div>` : ""}
+        </div>
+        <table class="receipt-table">
+          <thead><tr><th>#</th><th>Item</th><th>Qty</th><th>Buying Price</th><th>Total</th></tr></thead>
+          <tbody>
+            ${d.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.name)}</td><td>${r.qty}</td><td>${r.price != null ? fmt(r.price) : "—"}</td><td>${fmt(r.total)}</td></tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="receipt-total-row"><span>Total Quantity</span><span>${d.rows.reduce((s, r) => s + r.qty, 0)}</span></div>
+        <div class="receipt-total-row"><span>Grand Total</span><span>${fmt(d.total)}</span></div>
+        ${d.note ? `<p style="font-size:11.5px;margin-top:8px">Note: ${esc(d.note)}</p>` : ""}
+        <div style="display:flex;justify-content:space-between;margin-top:40px;gap:20px">
+          <div style="flex:1;text-align:center">
+            <div style="border-top:1px solid #172033;margin-top:30px;padding-top:4px;font-size:11.5px">Received by (Signature)</div>
+          </div>
+          <div style="flex:1;text-align:center">
+            <div style="border-top:1px solid #172033;margin-top:30px;padding-top:4px;font-size:11.5px">Supplier / Delivered by</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions no-print">
+        <button class="btn btn-ghost" onclick="UI.grnId=null;rerender();">Close</button>
+        <button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function saveLimit(itemId) {
   const val = document.getElementById("limit-" + itemId).value;
   STATE.stockItems = STATE.stockItems.map((it) => (it.id === itemId ? { ...it, lowStockLimit: val || null } : it));
@@ -3351,7 +3731,7 @@ function renderDispatchForm() {
       <button class="mode-btn ${f.mode === "transfer" ? "active" : ""}" onclick="setDispatchField('mode','transfer')">🔁 Send to Dukani</button>
       <button class="mode-btn ${f.mode === "customer" ? "active" : ""}" onclick="setDispatchField('mode','customer')">🧾 Sell to Customer</button>
     </div>
-    <input list="product-datalist" id="ds-item" class="field" placeholder="Type item name" value="${esc(f.itemName)}" oninput="setDispatchField('itemName',this.value)">
+    <input list="product-datalist" id="ds-item" class="field" placeholder="Type item name" value="${esc(f.itemName)}" oninput="setDispatchField('itemName',this.value)" onchange="rerender()">
     ${f.itemName.trim() ? `<div style="font-size:10.5px;color:${matched ? "#8290a4" : "#dc2636"};margin:-4px 0 4px 2px">${matched ? `${qtyOf(matched.id)} currently in stock` : "⚠️ Not found in this store's stock"}</div>` : ""}
     <input id="ds-qty" class="field" type="text" inputmode="numeric" placeholder="Quantity to dispatch" value="${esc(f.qty)}" oninput="this.value=sanitizeNum(this.value);setDispatchField('qty',this.value)">
     ${f.mode === "customer" ? `
@@ -3366,7 +3746,11 @@ function renderDispatchForm() {
     </div>
   </div>`;
 }
-function setDispatchField(field, value) { UI.dispatchForm[field] = value; rerender(); }
+function setDispatchField(field, value) {
+  UI.dispatchForm[field] = value;
+  if (TYPING_FIELDS.includes(field)) return;
+  rerender();
+}
 function submitDispatchStock() {
   const f = UI.dispatchForm;
   const qty = Number(f.qty);
@@ -3385,7 +3769,8 @@ function submitDispatchStock() {
       target = { id: uid(), name: item.name, category: item.category, lowStockLimit: item.lowStockLimit, store: "dukani" };
       STATE.stockItems.push(target);
     }
-    const avgPrice = avgBuyPrice(item.id);
+    const avgPrice = buyPriceOf(item);
+    if (avgPrice != null && target.buyPrice == null) target.buyPrice = avgPrice;
     STATE.stockMovements.push({ id: uid(), itemId: target.id, type: "in", qty, supplier: "Godown Transfer", date, price: avgPrice });
     saveStockItems();
     saveStockMovements();
