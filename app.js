@@ -29,7 +29,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v36";
+const APP_VERSION = "v37";
 let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -2874,7 +2874,7 @@ function renderColumnPage(kind) {
         ${searchBar}
         ${renderDuplicateBanner(kind)}
         ${filtered.length === 0 && !UI[formKey] ? `<p class="empty-note">${search ? "Nobody matches this search." : "No records yet."}</p>` : ""}
-        ${filtered.map((e) => safeCard(e, expandedKey)).join("")}
+        <div class="card-grid">${filtered.map((e) => safeCard(e, expandedKey)).join("")}</div>
         ${UI[formKey] ? renderEntryForm(kind) : ""}
       </div>
       ${!UI[formKey] ? `<button class="add-btn" onclick="startAdd('${kind}')">＋ Add ${isOwed ? "Debtor" : "Creditor"}</button>` : ""}
@@ -3100,7 +3100,7 @@ function renderCard(entry, expandedKey) {
   const expanded = UI[expandedKey] === entry.id;
 
   return `
-  <div class="card ${accent} ${isCleared ? "cleared" : ""}">
+  <div class="card ${accent} ${isCleared ? "cleared" : ""} ${expanded ? "expanded" : ""}">
     <button class="card-head" onclick="toggleCard('${expandedKey}','${entry.id}')">
       <div class="card-head-main">
         <span class="card-name">${esc(entry.name)}</span>
