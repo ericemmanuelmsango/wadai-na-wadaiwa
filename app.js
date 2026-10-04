@@ -29,7 +29,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v34";
+const APP_VERSION = "v36";
 let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -96,8 +96,60 @@ function migrateToCharges(e) {
   if (e.charges) return e;
   return { ...e, charges: getCharges(e) };
 }
+/* Names are compared loosely: "Ngira", "ngira ", "NGIRA" and "Ngira." are the same person. */
+function normName(n) { return (n || "").toLowerCase().replace(/[.,'"`]/g, "").replace(/\s+/g, " ").trim(); }
+// Finds the person's account — an open one first, otherwise a closed one in History.
 function findExistingAccount(kind, name) {
-  return STATE.entries.find((e) => e.kind === kind && !e.archived && e.name.trim().toLowerCase() === name.trim().toLowerCase());
+  const n = normName(name);
+  if (!n) return null;
+  return STATE.entries.find((e) => e.kind === kind && !e.archived && normName(e.name) === n)
+    || STATE.entries.find((e) => e.kind === kind && e.archived && normName(e.name) === n)
+    || null;
+}
+// Groups of open accounts that share the same name (created before, or by mistake).
+function duplicateGroups(kind) {
+  const groups = {};
+  STATE.entries.filter((e) => e.kind === kind && !e.archived).forEach((e) => {
+    const k = normName(e.name);
+    (groups[k] = groups[k] || []).push(e);
+  });
+  return Object.entries(groups).filter(([, list]) => list.length > 1);
+}
+// Puts all of one person's accounts into a single account: every charge and payment kept.
+function mergeAccounts(kind, key) {
+  const list = STATE.entries.filter((e) => e.kind === kind && !e.archived && normName(e.name) === key);
+  if (list.length < 2) return;
+  const sorted = [...list].sort((a, b) => (a.dateCreated < b.dateCreated ? -1 : 1));
+  const main = migrateToCharges(sorted[0]);
+  const totalBal = list.reduce((s, e) => s + balanceOf(e), 0);
+  if (!confirm(`Unganisha accounts ${list.length} za "${main.name}" kuwa account MOJA?\n\nHesabu zote (madeni na malipo) zitabaki — hakuna kinachofutika.\nBalance ya jumla: ${fmt(totalBal)}`)) return;
+  const charges = [], payments = [];
+  sorted.forEach((e) => {
+    migrateToCharges(e).charges.forEach((c) => charges.push(c));
+    (e.payments || []).forEach((p) => payments.push(p));
+  });
+  charges.sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : 1));
+  payments.sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : 1));
+  const dues = sorted.map((e) => e.dueDate).filter(Boolean).sort();
+  const merged = {
+    ...main,
+    charges, payments,
+    phone: sorted.map((e) => (e.phone || "").trim()).find(Boolean) || "",
+    dueDate: dues[0] || null,
+  };
+  const removeIds = new Set(sorted.slice(1).map((e) => e.id));
+  STATE.entries = STATE.entries.filter((e) => !removeIds.has(e.id)).map((e) => (e.id === main.id ? merged : e));
+  saveEntries();
+  UI[kind === "owed_to_me" ? "expandedOwed" : "expandedOwe"] = main.id;
+  rerender();
+}
+function mergeAllDuplicates(kind) {
+  const groups = duplicateGroups(kind);
+  if (!groups.length) return;
+  if (!confirm(`Unganisha majina ${groups.length} yanayojirudia? Kila mtu atabaki na account moja yenye hesabu zake zote.`)) return;
+  const realConfirm = window.confirm;
+  window.confirm = () => true; // already confirmed once for all
+  try { groups.forEach(([key]) => mergeAccounts(kind, key)); } finally { window.confirm = realConfirm; }
 }
 function dueStatus(e) {
   const bal = balanceOf(e);
@@ -160,6 +212,22 @@ function removeLogo() {
   rerender();
 }
 
+/* =====================================================================
+   CLOUD STORAGE — split into several documents so the 1 MB per-document
+   limit of Firestore is never reached. Each list (entries, products, stock…)
+   is saved in its own document(s) named like "products__0", "products__1"…
+   A big list is automatically cut into parts of ~550 KB.
+   If the database rules don't allow this yet, the app falls back to the old
+   single "data" document and says so in Settings → Sync Check.
+   ===================================================================== */
+const SPLIT_FIELDS = ["entries", "products", "stockItems", "stockMovements", "sales", "deliveries"];
+const PART_LIMIT = 550000;          // characters per part (Firestore hard limit is ~1,000,000 bytes)
+let STORAGE_MODE = "split";         // "split" or "legacy"
+let colRef = null;
+let KNOWN_PARTS = {};               // field -> how many part-documents exist in the cloud
+let LEGACY_FIELDS = {};             // field -> still stored inside the old "data" document
+let STORAGE_INFO = { parts: 0, biggestKB: 0 };
+
 function loadState() {
   if (!CONFIG_IS_SET) return;
   // Sign in anonymously in the background — invisible to the user — purely so
@@ -174,21 +242,112 @@ function loadState() {
     if (!u) return;
     AUTH_READY = true;
     if (!docRef._unsub) {
-      docRef._unsub = docRef.onSnapshot({ includeMetadataChanges: true }, (doc) => {
-        UI.sync = { fromCache: doc.metadata.fromCache, pending: doc.metadata.hasPendingWrites, at: new Date() };
-        applyCloudData(doc.exists ? doc.data() : {});
-        const wasLoaded = STATE_LOADED;
-        STATE_LOADED = true;
-        if (wasLoaded) checkAlertsForNotification();
-        rerender();
-      }, () => {
-        UI.err = "Access denied by the database. Check your Firestore security rules.";
-        STATE_LOADED = true;
-        rerender();
-      });
+      colRef = db.collection("wadai_na_wadaiwa");
+      docRef._unsub = startSplitListener();
     }
     rerender();
   });
+}
+function afterCloudUpdate() {
+  const wasLoaded = STATE_LOADED;
+  STATE_LOADED = true;
+  if (wasLoaded) checkAlertsForNotification();
+  rerender();
+}
+function startSplitListener() {
+  return colRef.onSnapshot({ includeMetadataChanges: true }, (snap) => {
+    const docs = {};
+    snap.forEach((d) => { docs[d.id] = d.data(); });
+    const main = docs.data || {};
+    const result = { settings: main.settings };
+    let parts = 0, biggest = 0;
+    SPLIT_FIELDS.forEach((f) => {
+      const mine = Object.keys(docs).filter((id) => id.startsWith(f + "__")).map((id) => docs[id]).sort((x, y) => x.part - y.part);
+      KNOWN_PARTS[f] = mine.length;
+      LEGACY_FIELDS[f] = Array.isArray(main[f]);
+      if (mine.length) {
+        const n = mine[0].of;
+        result[f] = [].concat(...mine.filter((p) => p.of === n).map((p) => p.items || []));
+        // Records written by a device still running an OLD version land in the
+        // old document — rescue anything new from there so nothing is lost.
+        if (LEGACY_FIELDS[f]) {
+          const ids = new Set(result[f].map((x) => x && x.id));
+          main[f].forEach((x) => { if (x && x.id && !ids.has(x.id)) result[f].push(x); });
+        }
+      } else {
+        result[f] = main[f] || [];
+      }
+    });
+    Object.keys(docs).forEach((id) => { parts++; biggest = Math.max(biggest, JSON.stringify(docs[id]).length); });
+    STORAGE_INFO = { parts, biggestKB: Math.round(biggest / 1024) };
+    UI.sync = { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites, at: new Date() };
+    applyCloudData(result);
+    afterCloudUpdate();
+    // Move anything still in the old single document into its own part-documents.
+    if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites) {
+      SPLIT_FIELDS.filter((f) => LEGACY_FIELDS[f]).forEach((f) => saveField(f));
+    }
+  }, (err) => {
+    // Rules don't allow reading the whole collection yet → keep working the old way.
+    STORAGE_MODE = "legacy";
+    UI.storageNote = err && err.code === "permission-denied"
+      ? "Your Firestore rules only allow the single 'data' document."
+      : "Could not use split storage: " + (err && err.message ? err.message : "unknown error");
+    docRef._unsub = startLegacyListener();
+  });
+}
+function startLegacyListener() {
+  return docRef.onSnapshot({ includeMetadataChanges: true }, (doc) => {
+    UI.sync = { fromCache: doc.metadata.fromCache, pending: doc.metadata.hasPendingWrites, at: new Date() };
+    const data = doc.exists ? doc.data() : {};
+    STORAGE_INFO = { parts: 1, biggestKB: Math.round(JSON.stringify(data).length / 1024) };
+    applyCloudData(data);
+    afterCloudUpdate();
+  }, () => {
+    UI.err = "Access denied by the database. Check your Firestore security rules.";
+    STATE_LOADED = true;
+    rerender();
+  });
+}
+// Cuts a list into parts that each stay well under the 1 MB limit.
+function chunkList(list) {
+  const chunks = [[]];
+  let size = 0;
+  list.forEach((item) => {
+    const len = JSON.stringify(item).length + 1;
+    if (size + len > PART_LIMIT && chunks[chunks.length - 1].length) { chunks.push([]); size = 0; }
+    chunks[chunks.length - 1].push(item);
+    size += len;
+  });
+  return chunks;
+}
+function saveField(f) {
+  if (!docRef) return;
+  if (f === "stockMovements") invalidateStock();
+  if (STORAGE_MODE === "legacy" || !colRef) {
+    return docRef.set({ [f]: STATE[f] }, { merge: true }).then(onSaveSuccess).catch(onSaveError);
+  }
+  const chunks = chunkList(STATE[f] || []);
+  const batch = db.batch();
+  chunks.forEach((items, i) => batch.set(colRef.doc(f + "__" + i), { part: i, of: chunks.length, items }));
+  for (let i = chunks.length; i < (KNOWN_PARTS[f] || 0); i++) batch.delete(colRef.doc(f + "__" + i));
+  if (LEGACY_FIELDS[f]) batch.set(docRef, { [f]: firebase.firestore.FieldValue.delete() }, { merge: true });
+  KNOWN_PARTS[f] = chunks.length;
+  LEGACY_FIELDS[f] = false;
+  return batch.commit().then(onSaveSuccess).catch(onSaveError);
+}
+// Full copy of everything as a file on this device — keep it somewhere safe.
+function downloadBackup() {
+  const data = { exportedAt: new Date().toISOString(), version: APP_VERSION };
+  SPLIT_FIELDS.forEach((f) => { data[f] = STATE[f]; });
+  data.settings = { ...STATE.settings, appPassword: undefined, reportsPassword: undefined };
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "wadai-backup-" + todayStr() + ".json";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 function applyCloudData(data) {
   STATE.entries = data.entries || [];
@@ -204,8 +363,20 @@ function reloadFromCloud() {
   if (!docRef) return;
   UI.syncCheckMsg = { ok: true, text: "Loading from cloud…" };
   rerender();
-  docRef.get({ source: "server" }).then((doc) => {
-    applyCloudData(doc.exists ? doc.data() : {});
+  const getter = STORAGE_MODE === "split" && colRef
+    ? colRef.get({ source: "server" }).then((snap) => {
+        const docs = {}; snap.forEach((d) => { docs[d.id] = d.data(); });
+        const main = docs.data || {};
+        const result = { settings: main.settings };
+        SPLIT_FIELDS.forEach((f) => {
+          const mine = Object.keys(docs).filter((id) => id.startsWith(f + "__")).map((id) => docs[id]).sort((x, y) => x.part - y.part);
+          result[f] = mine.length ? [].concat(...mine.map((p) => p.items || [])) : (main[f] || []);
+        });
+        return result;
+      })
+    : docRef.get({ source: "server" }).then((doc) => (doc.exists ? doc.data() : {}));
+  getter.then((data) => {
+    applyCloudData(data);
     UI.sync = { fromCache: false, pending: false, at: new Date() };
     UI.syncCheckMsg = { ok: true, text: "✅ Fresh data loaded from the cloud." };
     rerender();
@@ -230,12 +401,12 @@ function onSaveError(err) {
 function onSaveSuccess() {
   if (UI.syncOk === false) { UI.syncOk = true; UI.err = null; rerender(); }
 }
-function saveEntries() { if (docRef) docRef.set({ entries: STATE.entries }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
-function saveProducts() { if (docRef) docRef.set({ products: STATE.products }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
-function saveStockItems() { if (docRef) docRef.set({ stockItems: STATE.stockItems }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
-function saveStockMovements() { invalidateStock(); if (docRef) docRef.set({ stockMovements: STATE.stockMovements }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
-function saveSales() { if (docRef) docRef.set({ sales: STATE.sales }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
-function saveDeliveries() { if (docRef) docRef.set({ deliveries: STATE.deliveries }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
+function saveEntries() { saveField("entries"); }
+function saveProducts() { saveField("products"); }
+function saveStockItems() { saveField("stockItems"); }
+function saveStockMovements() { invalidateStock(); saveField("stockMovements"); }
+function saveSales() { saveField("sales"); }
+function saveDeliveries() { saveField("deliveries"); }
 function saveSettings() { if (docRef) docRef.set({ settings: STATE.settings }, { merge: true }).then(onSaveSuccess).catch(onSaveError); }
 
 /* ---------- render with focus preservation ---------- */
@@ -2591,9 +2762,25 @@ function renderSettings() {
       <tr><td>Last update received</td><td style="text-align:right">${s ? s.at.toLocaleTimeString() : "—"}</td></tr>
       <tr><td>Debtors / Creditors</td><td style="text-align:right"><strong>${active.filter((e) => e.kind === "owed_to_me").length} / ${active.filter((e) => e.kind === "i_owe").length}</strong></td></tr>
       <tr><td>Products / Stock records</td><td style="text-align:right"><strong>${STATE.products.length} / ${STATE.stockMovements.length}</strong></td></tr>
+      <tr><td>Storage</td><td style="text-align:right"><strong>${STORAGE_MODE === "split"
+        ? `✅ Split into ${STORAGE_INFO.parts} parts · biggest ${STORAGE_INFO.biggestKB} KB of 1024 KB`
+        : `⚠️ Single document · ${STORAGE_INFO.biggestKB} KB of 1024 KB used`}</strong></td></tr>
     </tbody></table>
+    ${STORAGE_MODE === "legacy" ? `<div class="reminder-bar" style="margin:10px 0 0">
+      <div style="font-size:12px">⚠️ ${esc(UI.storageNote || "")} Data is still safe, but this document will be FULL at 1024 KB. To remove the limit, open Firebase Console → Firestore Database → <strong>Rules</strong>, replace everything with the rules below, and press <strong>Publish</strong>. Then refresh this page.</div>
+      <pre style="font-size:11px;background:#fff;padding:8px;border-radius:6px;overflow-x:auto;margin:8px 0 0">rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /wadai_na_wadaiwa/{docId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}</pre></div>` : ""}
     ${UI.syncCheckMsg ? `<p class="settings-msg ${UI.syncCheckMsg.ok ? "ok" : "err"}">${esc(UI.syncCheckMsg.text)}</p>` : ""}
-    <button class="btn btn-primary" style="margin-top:10px" onclick="reloadFromCloud()">🔄 Reload from cloud</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn btn-primary" onclick="reloadFromCloud()">🔄 Reload from cloud</button>
+      <button class="btn btn-ghost" onclick="downloadBackup()">⬇️ Download backup</button>
+    </div>
     <p style="font-size:11.5px;color:#6b7280;margin-top:10px">💡 If this whole box is missing on one device, that device is opening an OLD copy of the system (old link, old Claude artifact, or browser cache). Use the same website address on both.</p>
   </div>
 
@@ -2685,6 +2872,7 @@ function renderColumnPage(kind) {
       </div>
       <div class="column-list">
         ${searchBar}
+        ${renderDuplicateBanner(kind)}
         ${filtered.length === 0 && !UI[formKey] ? `<p class="empty-note">${search ? "Nobody matches this search." : "No records yet."}</p>` : ""}
         ${filtered.map((e) => safeCard(e, expandedKey)).join("")}
         ${UI[formKey] ? renderEntryForm(kind) : ""}
@@ -2705,6 +2893,20 @@ function renderColumnPage(kind) {
   </div>`;
 }
 
+function renderDuplicateBanner(kind) {
+  const groups = duplicateGroups(kind);
+  if (!groups.length) return "";
+  return `
+  <div class="reminder-bar" style="margin:0 0 10px">
+    <div class="reminder-title">👥 Majina yanayojirudia (${groups.length}) — hesabu zao ziko kwenye accounts tofauti</div>
+    ${groups.map(([key, list]) => `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-top:1px dashed var(--line)">
+        <span style="font-size:12.5px"><strong>${esc(list[0].name)}</strong> — accounts ${list.length} · balance ${fmt(list.reduce((s, e) => s + balanceOf(e), 0))}</span>
+        <button class="btn btn-sm btn-primary" onclick="mergeAccounts('${kind}','${esc(key).replace(/'/g, "&#39;")}')">🔗 Unganisha</button>
+      </div>`).join("")}
+    ${groups.length > 1 ? `<button class="btn btn-sm btn-ghost" style="margin-top:6px" onclick="mergeAllDuplicates('${kind}')">🔗 Unganisha zote</button>` : ""}
+  </div>`;
+}
 // One damaged record must never hide the whole list.
 function safeCard(e, expandedKey) {
   try { return renderCard(e, expandedKey); }
@@ -2734,7 +2936,9 @@ function renderEntryForm(kind) {
     <input id="ef-name" class="field" placeholder="Name" value="${esc(f.name)}" oninput="setFormField('${kind}','name',this.value)" onchange="rerender()">
     ${match ? `
       <div class="reminder-bar" style="margin:0;padding:10px 12px">
-        <div style="font-size:12.5px">⚠️ <strong>${esc(match.name)}</strong> already has an account here — balance: <strong>${fmt(balanceOf(match))}</strong>. This will be <strong>added to that account</strong>.</div>
+        <div style="font-size:12.5px">${match.archived
+          ? `🗄️ <strong>${esc(match.name)}</strong> yuko kwenye History (account imefungwa). Account yake itarudishwa na hesabu hii <strong>itaongezwa pale pale</strong>, pamoja na taarifa zake za zamani.`
+          : `⚠️ <strong>${esc(match.name)}</strong> already has an account here — balance: <strong>${fmt(balanceOf(match))}</strong>. This will be <strong>added to that account</strong>, so all their records stay together.`}</div>
         <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:#6b7280;margin-top:6px">
           <input type="checkbox" ${f.forceNew ? "checked" : ""} onchange="setFormField('${kind}','forceNew',this.checked)">
           This is a different person with the same name — create a separate account
@@ -2860,6 +3064,8 @@ function submitEntry(kind) {
         charges: [...migrated.charges, charge],
         phone: e.phone || f.phone.trim(),
         dueDate: f.dueDate || e.dueDate,
+        archived: false,
+        archivedDate: null,
       };
     });
     saveEntries();
