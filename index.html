@@ -126,7 +126,11 @@ input{font-family:inherit;}
 
 /* ledger columns */
 .columns{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
-.columns.single{grid-template-columns:1fr;max-width:640px;}
+.columns.single{grid-template-columns:1fr;max-width:none;width:100%;}
+/* Debtors / Creditors: cards fill the whole screen like the Sales page */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px;align-items:start;}
+.card-grid .card.expanded{grid-column:1/-1;}
+@media(max-width:680px){.card-grid{grid-template-columns:1fr;}}
 @media(max-width:680px){.columns{grid-template-columns:1fr;}}
 .column{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px;display:flex;flex-direction:column;}
 .column-header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;margin-bottom:14px;border-bottom:2px solid var(--line);}
@@ -227,6 +231,6 @@ input{font-family:inherit;}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="app.js?v=36"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>
