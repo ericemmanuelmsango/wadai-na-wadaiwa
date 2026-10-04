@@ -29,7 +29,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v33";
+const APP_VERSION = "v34";
 let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -440,7 +440,7 @@ function renderShell() {
     <main class="main">
       <header class="topbar">
         <div class="search">🔍&nbsp;
-          <input id="search-input" placeholder="Search by name..." value="${esc(UI.search)}" oninput="UI.search=this.value; softRerender();">
+          <input id="search-input" type="search" autocomplete="off" name="ledger-search-no-autofill" placeholder="Search by name..." value="${esc(UI.search)}" oninput="UI.search=this.value; softRerender();">
         </div>
         <div class="profile">
           <button class="bell-wrap" onclick="setPage('alerts')">🔔${dueCount > 0 ? `<span class="bell-dot">${dueCount}</span>` : ""}</button>
@@ -472,7 +472,8 @@ function renderShell() {
 /* Update a number on screen without redrawing the whole page (keeps typing fast). */
 function setText(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
 
-function setPage(p) { UI.page = p; UI.receiptEntryId = null; rerender(); }
+function setPage(p) { if (UI.page !== p) UI.search = ""; UI.page = p; UI.receiptEntryId = null; rerender(); }
+function clearSearch() { UI.search = ""; rerender(); }
 
 function safeRenderPage(page) {
   try {
@@ -1887,7 +1888,7 @@ function renderProductsPage() {
       <h3 style="margin:0">Your Products (${active.length})</h3>
       <button class="btn btn-sm btn-primary" onclick="importBulkProducts()">⬇️ Import Full Parts List (${BULK_PRODUCTS.length})</button>
     </div>
-    <input id="product-search-input" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search product..." value="${esc(UI.search)}" oninput="UI.search=this.value;softRerender();">
+    <input id="product-search-input" type="search" autocomplete="off" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search product..." value="${esc(UI.productSearch || "")}" oninput="UI.productSearch=this.value;softRerender();">
     ${renderProductsByLetter(active)}
   </div>
 
@@ -1957,7 +1958,7 @@ function permanentlyDeleteProduct(id) {
   rerender();
 }
 function renderProductsByLetter(active) {
-  const search = (UI.search || "").trim().toLowerCase();
+  const search = (UI.productSearch || "").trim().toLowerCase();
   const items = active.filter((p) => !search || p.name.toLowerCase().includes(search)).sort((a, b) => a.name.localeCompare(b.name));
   if (items.length === 0) return `<p class="empty-note">No products found.</p>`;
   const groups = {};
@@ -2662,8 +2663,12 @@ function changeAppPassword() {
 function renderColumnPage(kind) {
   const isOwed = kind === "owed_to_me";
   const active = STATE.entries.filter((e) => e.kind === kind && !e.archived);
-  const search = UI.search.trim().toLowerCase();
+  const search = (UI.search || "").trim().toLowerCase();
   const filtered = search ? active.filter((e) => e.name.toLowerCase().includes(search)) : active;
+  const searchBar = search ? `<div class="reminder-bar" style="margin:0 0 10px;padding:8px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="font-size:12.5px">🔍 Search "<strong>${esc(UI.search)}</strong>" is on — showing ${filtered.length} of ${active.length}</span>
+      <button class="btn btn-sm btn-primary" onclick="clearSearch()">✖ Show all</button>
+    </div>` : "";
   const history = STATE.entries.filter((e) => e.kind === kind && e.archived);
   const total = filtered.reduce((s, e) => s + Math.max(balanceOf(e), 0), 0);
   const accent = isOwed ? "green" : "rust";
@@ -2679,8 +2684,9 @@ function renderColumnPage(kind) {
         <div class="column-total"><span class="column-total-label">Total</span><span class="column-total-val">${fmt(total)}</span></div>
       </div>
       <div class="column-list">
-        ${filtered.length === 0 && !UI[formKey] ? `<p class="empty-note">No records yet.</p>` : ""}
-        ${filtered.map((e) => renderCard(e, expandedKey)).join("")}
+        ${searchBar}
+        ${filtered.length === 0 && !UI[formKey] ? `<p class="empty-note">${search ? "Nobody matches this search." : "No records yet."}</p>` : ""}
+        ${filtered.map((e) => safeCard(e, expandedKey)).join("")}
         ${UI[formKey] ? renderEntryForm(kind) : ""}
       </div>
       ${!UI[formKey] ? `<button class="add-btn" onclick="startAdd('${kind}')">＋ Add ${isOwed ? "Debtor" : "Creditor"}</button>` : ""}
@@ -2699,6 +2705,11 @@ function renderColumnPage(kind) {
   </div>`;
 }
 
+// One damaged record must never hide the whole list.
+function safeCard(e, expandedKey) {
+  try { return renderCard(e, expandedKey); }
+  catch (err) { return `<div class="reminder-bar" style="margin:0">⚠️ Could not display "${esc(e && e.name)}" (${esc(err.message)})</div>`; }
+}
 function startAdd(kind) {
   const key = kind === "owed_to_me" ? "formOwed" : "formOwe";
   UI[key] = {
@@ -2853,6 +2864,7 @@ function submitEntry(kind) {
     });
     saveEntries();
     UI[key] = null;
+    UI.search = "";
     if (charge.items && charge.items.length) UI.receiptEntryId = match.id;
     rerender();
     return;
@@ -2865,6 +2877,7 @@ function submitEntry(kind) {
   STATE.entries.push(entry);
   saveEntries();
   UI[key] = null;
+  UI.search = "";
   if (charge.items && charge.items.length) UI.receiptEntryId = entry.id;
   rerender();
 }
