@@ -29,7 +29,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v38";
+const APP_VERSION = "v39";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -233,13 +233,18 @@ function loadState() {
   // Sign in anonymously in the background — invisible to the user — purely so
   // Firestore's security rules can require "someone went through our app" and
   // block raw outside access. The real gate the user sees is the app password below.
-  auth.signInAnonymously().catch(() => {
-    UI.err = "Could not connect to the cloud database. Check your internet connection.";
-    AUTH_READY = true;
-    rerender();
-  });
+  // A device that was "activated" with the business email stays signed in.
+  // Otherwise we fall back to the old anonymous sign-in (works until the
+  // database rules are locked to the business email).
   auth.onAuthStateChanged((u) => {
-    if (!u) return;
+    if (!u) {
+      auth.signInAnonymously().catch(() => {
+        UI.err = "Could not connect to the cloud database. Check your internet connection.";
+        AUTH_READY = true;
+        rerender();
+      });
+      return;
+    }
     AUTH_READY = true;
     if (!docRef._unsub) {
       colRef = db.collection("wadai_na_wadaiwa");
@@ -306,10 +311,79 @@ function startLegacyListener() {
     applyCloudData(data);
     afterCloudUpdate();
   }, () => {
-    UI.err = "Access denied by the database. Check your Firestore security rules.";
+    // Database is locked to the business account and this device isn't activated yet.
+    UI.needDeviceLogin = true;
     STATE_LOADED = true;
     rerender();
   });
+}
+
+/* ---------- 🔐 Device activation (business email login) ---------- */
+function isSecuredDevice() { const u = auth && auth.currentUser; return !!(u && !u.isAnonymous); }
+function renderDeviceLogin() {
+  const f = UI.devLogin || (UI.devLogin = { email: "", pw: "", msg: "" });
+  return `<div class="login-wrap"><div class="login-card">
+    <div style="font-size:34px">🔐</div>
+    <h2 style="margin:0">Washa kifaa hiki</h2>
+    <p style="font-size:12.5px;color:#6b7280;margin:0">Database ya E.E.MSANGO imelindwa. Ingia mara moja kwa email ya biashara, na kifaa hiki kitakumbukwa.</p>
+    <input id="dl-email" class="field" type="email" autocomplete="username" placeholder="Email ya biashara" value="${esc(f.email)}" oninput="UI.devLogin.email=this.value">
+    <input id="dl-pw" class="field" type="password" autocomplete="current-password" placeholder="Password" onkeydown="if(event.key==='Enter')activateDevice()" oninput="UI.devLogin.pw=this.value">
+    ${f.msg ? `<p class="settings-msg ${f.ok ? "ok" : "err"}">${esc(f.msg)}</p>` : ""}
+    <button class="btn btn-primary" onclick="activateDevice()">Washa kifaa</button>
+  </div></div>`;
+}
+function activateDevice() {
+  const f = UI.devLogin || (UI.devLogin = { email: "", pw: "" });
+  if (!f.email.trim() || !f.pw) { f.msg = "Andika email na password."; f.ok = false; return rerender(); }
+  f.msg = "Inaingia…"; f.ok = true; rerender();
+  auth.signInWithEmailAndPassword(f.email.trim(), f.pw).then(() => {
+    f.msg = "✅ Kifaa kimewashwa. Inapakia upya…"; f.ok = true; rerender();
+    setTimeout(() => location.reload(), 800);
+  }).catch((e) => {
+    const c = e && e.code || "";
+    f.msg = c.includes("operation-not-allowed") ? "Email/Password haijawashwa kwenye Firebase (Authentication → Sign-in method)."
+      : c.includes("wrong-password") || c.includes("invalid-credential") || c.includes("user-not-found") || c.includes("invalid-login") ? "Email au password si sahihi."
+      : c.includes("network") ? "Hakuna mtandao." : "Imeshindikana: " + (e && e.message ? e.message : c);
+    f.ok = false; rerender();
+  });
+}
+function deactivateDevice() {
+  if (!confirm("Toa kifaa hiki kwenye akaunti ya biashara? Utahitaji kukiwasha tena kwa email na password.")) return;
+  auth.signOut().then(() => location.reload());
+}
+function securityRules(email) {
+  return `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /wadai_na_wadaiwa/{docId} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email == "${email || "EMAIL-YAKO@gmail.com"}";
+    }
+  }
+}`;
+}
+function renderSecurityPanel() {
+  const u = auth && auth.currentUser;
+  const secured = isSecuredDevice();
+  const f = UI.devLogin || (UI.devLogin = { email: "", pw: "", msg: "" });
+  return `
+  <div class="panel settings-panel" style="margin-top:16px">
+    <h3>🔐 Ulinzi wa Database</h3>
+    <p style="font-size:12.5px">Kifaa hiki: <strong>${secured ? "✅ Kimewashwa kwa " + esc(u.email) : "⚠️ Kinatumia njia ya zamani (anonymous) — ulinzi dhaifu"}</strong></p>
+    ${secured ? `<button class="btn btn-ghost" onclick="deactivateDevice()">Toa kifaa hiki</button>
+      <p style="font-size:12px;color:#6b7280;margin-top:10px">Ukishawasha VIFAA VYOTE (simu, computer, na POS kwenye kila kimoja), weka rules hizi kwenye Firebase Console → Firestore Database → Rules → Publish:</p>
+      <pre style="font-size:11px;background:var(--paper-alt);padding:8px;border-radius:6px;overflow-x:auto">${esc(securityRules(u.email))}</pre>`
+    : `<ol style="font-size:12px;color:#6b7280;padding-left:18px;margin:6px 0">
+        <li>Firebase Console → <b>Authentication → Sign-in method</b> → washa <b>Email/Password</b></li>
+        <li><b>Authentication → Users → Add user</b>: email ya biashara + password imara</li>
+        <li>Andika email na password hapa chini → <b>Washa kifaa hiki</b>. Rudia kwenye kila kifaa (na POS).</li>
+        <li>Vifaa vyote vikishawashwa, utaona rules za kuweka hapa.</li>
+      </ol>
+      <input id="sec-email" class="field" type="email" placeholder="Email ya biashara" value="${esc(f.email)}" oninput="UI.devLogin.email=this.value">
+      <input id="sec-pw" class="field" type="password" placeholder="Password" style="margin-top:6px" oninput="UI.devLogin.pw=this.value">
+      ${f.msg ? `<p class="settings-msg ${f.ok ? "ok" : "err"}">${esc(f.msg)}</p>` : ""}
+      <button class="btn btn-primary" style="margin-top:8px" onclick="activateDevice()">Washa kifaa hiki</button>`}
+  </div>`;
 }
 // Cuts a list into parts that each stay well under the 1 MB limit.
 function chunkList(list) {
@@ -387,6 +461,12 @@ function reloadFromCloud() {
     rerender();
   });
 }
+function toggleTheme() {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("ee_theme", next); } catch (e) {}
+  rerender();
+}
 function syncPill() {
   const s = UI.sync;
   let dot = "🟢", txt = "Live";
@@ -441,6 +521,10 @@ function render() {
   const root = document.getElementById("app");
   if (!CONFIG_IS_SET) {
     root.innerHTML = renderSetupNotice();
+    return;
+  }
+  if (UI.needDeviceLogin) {
+    root.innerHTML = renderDeviceLogin();
     return;
   }
   if (!AUTH_READY || !STATE_LOADED) {
@@ -618,6 +702,7 @@ function renderShell() {
         <div class="profile">
           <button class="bell-wrap" onclick="setPage('alerts')">🔔${dueCount > 0 ? `<span class="bell-dot">${dueCount}</span>` : ""}</button>
           <div class="avatar"></div>
+          <button class="logout-btn" title="Dark / Light mode" onclick="toggleTheme()">${document.documentElement.getAttribute("data-theme") === "dark" ? "☀️" : "🌙"}</button>
           ${syncPill()}
           <button class="logout-btn" onclick="handleLogout()">⏻ Lock</button>
         </div>
@@ -2785,6 +2870,8 @@ service cloud.firestore {
     </div>
     <p style="font-size:11.5px;color:#6b7280;margin-top:10px">💡 If this whole box is missing on one device, that device is opening an OLD copy of the system (old link, old Claude artifact, or browser cache). Use the same website address on both.</p>
   </div>
+
+  ${renderSecurityPanel()}
 
   <div class="panel settings-panel" style="margin-top:16px">
     <h3>🖼️ Company Logo</h3>
