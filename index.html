@@ -12,6 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="E.E.MSANGO">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("ee_theme")||"light")}catch(e){}</script>
 <style>
 :root{
   --ink:#172033; --paper:#f3f6fa; --paper-alt:#eef2f7; --line:#dfe4ec;
@@ -224,6 +225,27 @@ input{font-family:inherit;}
   .main{margin-left:70px;}
   .search{width:150px;}
 }
+
+/* ===== DARK MODE (toggle 🌙/☀️ in the top bar; choice saved on this device) ===== */
+html[data-theme="dark"]{--ink:#e6edf3;--paper:#0f1a24;--paper-alt:#16232f;--line:#26384a;--amber-soft:#3a2e14;color-scheme:dark;}
+html[data-theme="dark"] body{background:var(--paper);color:var(--ink);}
+html[data-theme="dark"] .login-card,html[data-theme="dark"] .panel,html[data-theme="dark"] .column,html[data-theme="dark"] .date,
+html[data-theme="dark"] .entry-form,html[data-theme="dark"] .items-summary-row,html[data-theme="dark"] .reminder-chip,
+html[data-theme="dark"] .chip-btn,html[data-theme="dark"] .field,html[data-theme="dark"] [style*="background:#fff"]{background:#16232f!important;color:var(--ink);box-shadow:none!important;}
+html[data-theme="dark"] .chip-btn.active,html[data-theme="dark"] .mode-btn.active{background:#2a5a8a!important;color:#fff;}
+html[data-theme="dark"] .card{background:#132029;}
+html[data-theme="dark"] .reminder-bar{border-color:#5a4a1e;}
+html[data-theme="dark"] .recent-table td,html[data-theme="dark"] .alert,html[data-theme="dark"] .rank-row,html[data-theme="dark"] td,html[data-theme="dark"] th{border-color:var(--line)!important;}
+html[data-theme="dark"] .alert-icon,html[data-theme="dark"] .avatar{background:#1d2c3a;}
+html[data-theme="dark"] .btn-ghost{color:#aab7c4;}
+html[data-theme="dark"] .archive-btn:hover{background:#1d2c3a;}
+html[data-theme="dark"] .badge.pending{background:#3a2e14;}
+html[data-theme="dark"] .err-banner{background:#3a1a1e;}
+html[data-theme="dark"] .modal-overlay{background:rgba(0,0,0,.7);}
+html[data-theme="dark"] input[type=date]{color-scheme:dark;}
+/* receipts / printouts stay paper-white */
+html[data-theme="dark"] .receipt-print{--ink:#172033;--line:#dfe4ec;--paper:#f3f6fa;--paper-alt:#eef2f7;background:#fff!important;color:#172033;}
+html[data-theme="dark"] .receipt-print .field,html[data-theme="dark"] .receipt-print [style*="background:#fff"]{background:#fff!important;color:#172033;}
 </style>
 </head>
 <body>
@@ -231,6 +253,6 @@ input{font-family:inherit;}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="app.js?v=38"></script>
+<script src="app.js?v=39"></script>
 </body>
 </html>
