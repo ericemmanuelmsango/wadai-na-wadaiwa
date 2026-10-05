@@ -29,8 +29,8 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v37";
-let STATE = { entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
+const APP_VERSION = "v38";
+let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
 let UI = {
@@ -280,6 +280,8 @@ function startSplitListener() {
     });
     Object.keys(docs).forEach((id) => { parts++; biggest = Math.max(biggest, JSON.stringify(docs[id]).length); });
     STORAGE_INFO = { parts, biggestKB: Math.round(biggest / 1024) };
+    // Sales made in the separate POS app (one document each) — they reduce stock here too.
+    STATE.posSales = Object.keys(docs).filter((id) => id.startsWith("possale_")).map((id) => docs[id]);
     UI.sync = { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites, at: new Date() };
     applyCloudData(result);
     afterCloudUpdate();
@@ -3356,6 +3358,7 @@ function stockCache() {
   const ref = STATE.stockMovements;
   if (_qtyCache && _qtyRef === ref && _qtyLen === ref.length) return _qtyCache;
   const qty = {}, inQty = {}, inCost = {};
+  for (const s of STATE.posSales || []) for (const i of s.items || []) qty[i.itemId] = (qty[i.itemId] || 0) - i.qty;
   for (const m of ref) {
     qty[m.itemId] = (qty[m.itemId] || 0) + (m.type === "in" ? m.qty : -m.qty);
     if (m.type === "in" && m.price != null) {
@@ -3448,6 +3451,7 @@ function renderMainStorePage(store) {
   </div>
 
   ${renderDeliveriesPanel(store)}
+  ${renderPosSalesPanel(store)}
 
   ${store === "godown" ? `
   <div class="panel" style="margin-top:16px">
@@ -3814,6 +3818,31 @@ function submitDelivery(andPrint) {
   UI.deliveryListMsg = { ok: true, text: `✅ Mzigo from ${supplier} saved — ${savedRows.length} item(s), total ${fmt(total)}. Stock and buying prices updated.` };
   if (andPrint) UI.grnId = deliveryId;
   rerender();
+}
+
+/* ---------- sales made in the POS app (read-only here) ---------- */
+function renderPosSalesPanel(store) {
+  const list = (STATE.posSales || []).filter((s) => s.store === store && !s.deleted).sort((a, b) => b.createdAt - a.createdAt);
+  if (!list.length) return "";
+  const today = todayStr();
+  const todayTotal = list.filter((s) => s.date === today).reduce((a, s) => a + s.total, 0);
+  const open = UI["showPos" + store];
+  return `
+  <div class="panel" style="margin-top:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <h3 style="margin:0">🛒 Mauzo ya POS — ${store === "godown" ? "Godown" : "Dukani"}</h3>
+      <span style="font-size:12.5px">Leo: <strong style="color:var(--green)">${fmt(todayTotal)}</strong></span>
+    </div>
+    <p style="font-size:11.5px;color:#8290a4;margin:4px 0 8px">Yanatoka kwenye app ya POS. Stock iliyo juu tayari imepunguzwa kwa mauzo haya.</p>
+    <button class="history-toggle" onclick="UI.showPos${store}=!UI.showPos${store};rerender();">Mauzo ya karibuni (${Math.min(list.length, 40)}) ${open ? "▲" : "▼"}</button>
+    ${open ? `<table class="recent-table" style="width:100%"><tbody>
+      ${list.slice(0, 40).map((s) => `<tr>
+        <td style="padding:7px 6px;white-space:nowrap">${s.date}<div style="font-size:10.5px;color:#8290a4">${esc(s.no)} · ${esc(s.userName)}</div></td>
+        <td style="padding:7px 6px">${s.items.map((i) => esc(i.name) + " ×" + i.qty).join(", ")}${s.customer ? `<div style="font-size:10.5px;color:#8290a4">${esc(s.customer)}</div>` : ""}</td>
+        <td style="padding:7px 6px;text-align:right;font-weight:600">${fmt(s.total)}<div style="font-size:10.5px;color:#8290a4">${s.pay === "M-Pesa" ? "Simu/Benki" : esc(s.pay)}</div></td>
+      </tr>`).join("")}
+    </tbody></table>` : ""}
+  </div>`;
 }
 
 /* ---------- supplier deliveries list + history ---------- */
