@@ -273,6 +273,26 @@ function oneTimeProductReset() {
   const done = saveField("products");                          // products first, the flag only after they are gone
   Promise.resolve(done).then(() => { STATE.settings.productResetId = PRODUCT_RESET_ID; saveSettings(); oneTimeProductReset.busy = false; });
 }
+/* ---------- ONE-TIME: clear all stock, Dukani + Godown (owner's request, 2026-10-15) ----------
+   Removes stock items and their in/out history. Debts, sales and settings are untouched. */
+const STOCK_RESET_ID = "2026-10-15-stock";
+function oneTimeStockReset() {
+  if (!STATE.settings || STATE.settings.stockResetId === STOCK_RESET_ID || oneTimeStockReset.busy) return;
+  if (Date.now() > Date.parse("2026-10-25")) return;          // safety: only during this changeover
+  oneTimeStockReset.busy = true;
+  STATE.stockItems = []; STATE.stockMovements = [];
+  invalidateStock();
+  // both lists in ONE batch, so the listener can't reload one of them in between
+  const batch = db.batch();
+  ["stockItems", "stockMovements"].forEach((f) => {
+    if (STORAGE_MODE === "legacy" || !colRef) { batch.set(docRef, { [f]: [] }, { merge: true }); return; }
+    batch.set(colRef.doc(f + "__0"), { part: 0, of: 1, items: [] });
+    for (let i = 1; i < (KNOWN_PARTS[f] || 0); i++) batch.delete(colRef.doc(f + "__" + i));
+    if (LEGACY_FIELDS[f]) batch.set(docRef, { [f]: firebase.firestore.FieldValue.delete() }, { merge: true });
+    KNOWN_PARTS[f] = 1; LEGACY_FIELDS[f] = false;
+  });
+  batch.commit().then(() => { STATE.settings.stockResetId = STOCK_RESET_ID; saveSettings(); oneTimeStockReset.busy = false; onSaveSuccess(); }).catch((e) => { oneTimeStockReset.busy = false; onSaveError(e); });
+}
 function startSplitListener() {
   return colRef.onSnapshot({ includeMetadataChanges: true }, (snap) => {
     const docs = {};
@@ -308,6 +328,7 @@ function startSplitListener() {
     if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites) {
       SPLIT_FIELDS.filter((f) => LEGACY_FIELDS[f]).forEach((f) => saveField(f));
       oneTimeProductReset();
+      oneTimeStockReset();
     }
   }, (err) => {
     // Rules don't allow reading the whole collection yet → keep working the old way.
