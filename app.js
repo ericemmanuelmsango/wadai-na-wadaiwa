@@ -2144,8 +2144,12 @@ function renderProductsPage() {
   <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <h3 style="margin:0">Your Products (${active.length})</h3>
-      <button class="btn btn-sm btn-primary" onclick="importBulkProducts()">⬇️ Import Full Parts List (${BULK_PRODUCTS.length})</button>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <label class="btn btn-sm btn-primary" style="cursor:pointer">📥 Ingiza bidhaa (Excel / CSV)<input type="file" accept=".xlsx,.xls,.csv,text/csv" style="display:none" onchange="readProductFile(this)"></label>
+        <button class="btn btn-sm btn-ghost" onclick="importBulkProducts()">⬇️ Parts List (${BULK_PRODUCTS.length})</button>
+      </div>
     </div>
+    ${renderProductImport()}
     <input id="product-search-input" type="search" autocomplete="off" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search product..." value="${esc(UI.productSearch || "")}" oninput="UI.productSearch=this.value;softRerender();">
     ${renderProductsByLetter(active)}
   </div>
@@ -2258,6 +2262,103 @@ function renderProductsByLetter(active) {
   }).join("");
 }
 
+/* ---------- IMPORT PRODUCTS FROM EXCEL / CSV ----------
+   Columns are found by their heading (Jina/Name/Bidhaa, Bei ya kuuza/Sell/Price, Bei ya kununua/Buy/Cost).
+   Without headings: column 1 = name, column 2 = selling price, column 3 = buying price. */
+function parseMoney(v) { const t = String(v == null ? "" : v).replace(/tsh|tzs|\/=|=|,|\s/gi, ""); if (t === "") return null; const n = Number(t); return isFinite(n) && n >= 0 ? n : null; }
+function parseCsvText(t) {
+  const rows = []; let row = [], cur = "", q = false;
+  const delim = (t.split("\n")[0].match(/;/g) || []).length > (t.split("\n")[0].match(/,/g) || []).length ? ";" : ",";
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (q) { if (c === '"' && t[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
+    else if (c === '"') q = true; else if (c === delim) { row.push(cur); cur = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && t[i + 1] === "\n") i++; row.push(cur); rows.push(row); row = []; cur = ""; }
+    else cur += c;
+  }
+  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter((r) => r.some((x) => String(x).trim() !== ""));
+}
+function rowsToProducts(rows) {
+  if (!rows.length) return { items: [], skipped: 0 };
+  const h = rows[0].map((x) => String(x || "").toLowerCase().trim());
+  const find = (re) => h.findIndex((x) => re.test(x));
+  let ni = find(/jina|name|bidhaa|product|item|maelezo|description|spare|kifaa/), si = find(/kuuza|sell|selling|retail|rejareja|^bei$|^price$|bei ya mauzo/), bi = find(/kununua|buy|buying|cost|gharama|jumla|wholesale|purchase/);
+  let start = 1;
+  if (ni < 0) { if (parseMoney(rows[0][1]) != null) { ni = 0; si = 1; bi = rows[0].length > 2 ? 2 : -1; start = 0; } else { ni = 0; si = 1; bi = 2; } }
+  if (si < 0) si = h.findIndex((x, i) => i !== ni && i !== bi && /bei|price/.test(x));
+  const items = [], seen = {}; let skipped = 0;
+  for (let r = start; r < rows.length; r++) {
+    const name = String(rows[r][ni] == null ? "" : rows[r][ni]).replace(/\s+/g, " ").trim();
+    const sell = si >= 0 ? parseMoney(rows[r][si]) : null, buy = bi >= 0 ? parseMoney(rows[r][bi]) : null;
+    if (!name || /^(jumla|total)$/i.test(name)) { skipped++; continue; }
+    const k = name.toLowerCase();
+    if (seen[k] != null) { items[seen[k]] = { name, price: sell || 0, buyPrice: buy }; skipped++; continue; }   // same name twice: last row wins
+    seen[k] = items.length; items.push({ name, price: sell || 0, buyPrice: buy });
+  }
+  return { items, skipped, cols: { name: h[ni] || "col 1", sell: si >= 0 ? h[si] || "col 2" : "—", buy: bi >= 0 ? h[bi] || "col 3" : "—" } };
+}
+function loadSheetJS() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((ok, bad) => { const sc = document.createElement("script"); sc.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"; sc.onload = ok; sc.onerror = () => bad(new Error("Imeshindwa kupakua kisoma Excel — angalia mtandao, au hifadhi faili kama CSV.")); document.head.appendChild(sc); });
+}
+function readProductFile(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  const isX = /\.xlsx?$/i.test(f.name), rd = new FileReader();
+  UI.prodImport = { busy: true, file: f.name }; rerender();
+  rd.onload = async () => {
+    try {
+      let rows;
+      if (isX) { await loadSheetJS(); const wb = XLSX.read(new Uint8Array(rd.result), { type: "array" }); rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: "" }); }
+      else rows = parseCsvText(String(rd.result).replace(/^﻿/, ""));
+      const res = rowsToProducts(rows);
+      UI.prodImport = res.items.length ? { file: f.name, ...res, mode: "replace" } : { file: f.name, err: "Sikuona bidhaa kwenye faili hili. Safu ya kwanza iwe Jina, ya pili Bei ya kuuza, ya tatu Bei ya kununua." };
+    } catch (e) { UI.prodImport = { file: f.name, err: e.message || String(e) }; }
+    rerender();
+  };
+  if (isX) rd.readAsArrayBuffer(f); else rd.readAsText(f);
+  inp.value = "";
+}
+function renderProductImport() {
+  const m = UI.prodImport; if (!m) return "";
+  if (m.busy) return `<p class="empty-note">Inasoma ${esc(m.file)}…</p>`;
+  if (m.err) return `<div class="panel" style="border-color:#dc2636"><p class="settings-msg err">${esc(m.err)}</p><button class="btn btn-sm btn-ghost" onclick="UI.prodImport=null;rerender();">Funga</button></div>`;
+  const active = STATE.products.filter((p) => !p.deleted).length;
+  return `<div class="panel" style="border:2px solid #1677ff;margin-bottom:12px">
+    <h3 style="margin-top:0">📥 ${esc(m.file)} — bidhaa ${m.items.length}</h3>
+    <p style="font-size:12px;color:#6b7280;margin:0 0 8px">Safu: Jina = <b>${esc(m.cols.name)}</b> · Bei ya kuuza = <b>${esc(m.cols.sell)}</b> · Bei ya kununua = <b>${esc(m.cols.buy)}</b>${m.skipped ? ` · mistari ${m.skipped} imerukwa (tupu au jina lililojirudia)` : ""}</p>
+    <div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:10px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="background:#f3f4f6"><th style="text-align:left;padding:6px">Jina</th><th style="text-align:right;padding:6px">Kuuza</th><th style="text-align:right;padding:6px">Kununua</th></tr>
+      ${m.items.slice(0, 50).map((it) => `<tr><td style="padding:5px 6px;border-top:1px solid var(--line)">${esc(it.name)}</td><td style="padding:5px 6px;border-top:1px solid var(--line);text-align:right">${fmt(it.price)}</td><td style="padding:5px 6px;border-top:1px solid var(--line);text-align:right">${it.buyPrice != null ? fmt(it.buyPrice) : "—"}</td></tr>`).join("")}
+      ${m.items.length > 50 ? `<tr><td colspan="3" style="padding:6px;color:#6b7280">… na nyingine ${m.items.length - 50}</td></tr>` : ""}</table></div>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:6px;cursor:pointer"><input type="radio" name="pimode" ${m.mode === "replace" ? "checked" : ""} onchange="UI.prodImport.mode='replace'"><span><b>Futa bidhaa zote za zamani (${active}) na weka hizi mpya.</b><br><span style="font-size:12px;color:#6b7280">Za zamani zinaenda Trash — unaweza kuzirudisha.</span></span></label>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;cursor:pointer"><input type="radio" name="pimode" ${m.mode === "merge" ? "checked" : ""} onchange="UI.prodImport.mode='merge'"><span><b>Ongeza mpya na sasisha bei za zilizopo.</b><br><span style="font-size:12px;color:#6b7280">Hakuna kinachofutwa.</span></span></label>
+    <div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="applyProductImport()">✅ Ingiza bidhaa ${m.items.length}</button><button class="btn btn-ghost" onclick="UI.prodImport=null;rerender();">Ghairi</button></div>
+  </div>`;
+}
+function applyProductImport() {
+  const m = UI.prodImport; if (!m || !m.items) return;
+  const today = todayStr();
+  if (m.mode === "replace") {
+    const n = STATE.products.filter((p) => !p.deleted).length;
+    if (!confirm(`Bidhaa ${n} za zamani zitaenda Trash na bidhaa ${m.items.length} mpya zitawekwa. Endelea?`)) return;
+    STATE.products = STATE.products.map((p) => (p.deleted ? p : { ...p, deleted: true, deletedDate: today }));
+    m.items.forEach((it) => STATE.products.push({ id: uid(), name: it.name, price: it.price, ...(it.buyPrice != null ? { buyPrice: it.buyPrice } : {}) }));
+    UI.userMsg = { ok: true, text: `Imekamilika: bidhaa ${m.items.length} mpya zimewekwa, ${n} za zamani ziko Trash.`, forProduct: true };
+  } else {
+    const byName = {}; STATE.products.forEach((p, i) => { if (!p.deleted) byName[p.name.toLowerCase()] = i; });
+    let added = 0, updated = 0;
+    m.items.forEach((it) => {
+      const i = byName[it.name.toLowerCase()];
+      if (i != null) { STATE.products[i] = { ...STATE.products[i], price: it.price, ...(it.buyPrice != null ? { buyPrice: it.buyPrice } : {}) }; updated++; }
+      else { STATE.products.push({ id: uid(), name: it.name, price: it.price, ...(it.buyPrice != null ? { buyPrice: it.buyPrice } : {}) }); added++; }
+    });
+    UI.userMsg = { ok: true, text: `Imekamilika: mpya ${added}, bei zimesasishwa ${updated}.`, forProduct: true };
+  }
+  UI.prodImport = null;
+  saveProducts();
+  rerender();
+}
 function importBulkProducts() {
   const existingNames = new Set(STATE.products.map((p) => p.name.toLowerCase()));
   let added = 0;
