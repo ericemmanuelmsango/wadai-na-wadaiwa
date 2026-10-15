@@ -259,6 +259,20 @@ function afterCloudUpdate() {
   if (wasLoaded) checkAlertsForNotification();
   rerender();
 }
+/* ---------- ONE-TIME: clear the product list (owner's request, 2026-10-15) ----------
+   Runs once, on the first device that loads fresh data from the server; a flag in
+   settings stops it from running again anywhere. Stock, sales and debts are untouched.
+   The new product list is loaded afterwards with "Import Full Parts List". */
+const PRODUCT_RESET_ID = "2026-10-15";
+function oneTimeProductReset() {
+  if (!STATE.settings || STATE.settings.productResetId === PRODUCT_RESET_ID) return;
+  if (Date.now() > Date.parse("2026-10-25")) return;          // safety: only during this changeover
+  if (oneTimeProductReset.busy) return;
+  oneTimeProductReset.busy = true;
+  STATE.products = [];
+  const done = saveField("products");                          // products first, the flag only after they are gone
+  Promise.resolve(done).then(() => { STATE.settings.productResetId = PRODUCT_RESET_ID; saveSettings(); oneTimeProductReset.busy = false; });
+}
 function startSplitListener() {
   return colRef.onSnapshot({ includeMetadataChanges: true }, (snap) => {
     const docs = {};
@@ -293,6 +307,7 @@ function startSplitListener() {
     // Move anything still in the old single document into its own part-documents.
     if (!snap.metadata.fromCache && !snap.metadata.hasPendingWrites) {
       SPLIT_FIELDS.filter((f) => LEGACY_FIELDS[f]).forEach((f) => saveField(f));
+      oneTimeProductReset();
     }
   }, (err) => {
     // Rules don't allow reading the whole collection yet → keep working the old way.
