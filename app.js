@@ -2623,6 +2623,15 @@ function renderProductsPage() {
     <input id="pr-name" class="field" placeholder="Product name">
     <input id="pr-price" class="field" type="text" inputmode="decimal" placeholder="Selling price (TSh)" oninput="this.value=sanitizeNum(this.value)">
     <input id="pr-buy" class="field" type="text" inputmode="decimal" placeholder="Buying price (TSh) — optional" oninput="this.value=sanitizeNum(this.value)">
+    <div style="border:1px dashed var(--line);border-radius:8px;padding:10px;margin:4px 0 10px">
+      <div style="font-size:12.5px;font-weight:700;margin-bottom:6px">📦 Ingiza moja kwa moja kwenye stock (hiari)</div>
+      <input id="pr-qty" class="field" type="text" inputmode="decimal" placeholder="Idadi uliyopokea — acha wazi kama huingizi stock" oninput="this.value=sanitizeNum(this.value)">
+      <select id="pr-store" class="field">
+        <option value="dukani">🏪 Dukani</option>
+        <option value="godown">🏭 Godown</option>
+      </select>
+      <input id="pr-supplier" class="field" placeholder="Supplier — hiari">
+    </div>
     ${UI.userMsg && UI.userMsg.forProduct ? `<p class="settings-msg ${UI.userMsg.ok ? "ok" : "err"}">${esc(UI.userMsg.text)}</p>` : ""}
     <button class="btn btn-primary" onclick="addProduct()">Add Product</button>
   </div>
@@ -2651,10 +2660,24 @@ function addProduct() {
     UI.userMsg = { ok: false, text: "That product already exists.", forProduct: true }; return rerender();
   }
   const buyVal = document.getElementById("pr-buy").value;
+  const qty = Number(document.getElementById("pr-qty").value) || 0;
+  const store = document.getElementById("pr-store").value === "godown" ? "godown" : "dukani";
+  const supplier = document.getElementById("pr-supplier").value.trim();
   STATE.products.push({ id: uid(), name, price: price || 0, ...(buyVal ? { buyPrice: Number(buyVal) } : {}) });
-  if (buyVal) { setBuyPriceEverywhere(name, Number(buyVal)); saveStockItems(); }
+  // new product received: put it straight into the chosen store's stock
+  if (qty > 0) {
+    let item = storeItems(store).find((it) => it.name.toLowerCase() === name.toLowerCase());
+    if (!item) {
+      item = { id: uid(), name, category: guessCategory(name), lowStockLimit: null, store };
+      STATE.stockItems.push(item);
+    }
+    STATE.stockMovements.push({ id: uid(), itemId: item.id, type: "in", qty, supplier: supplier || "Bidhaa mpya", date: todayStr(), price: buyVal ? Number(buyVal) : null });
+  }
+  if (buyVal) setBuyPriceEverywhere(name, Number(buyVal));
+  if (buyVal || qty > 0) saveStockItems();
+  if (qty > 0) saveStockMovements();
   saveProducts();
-  UI.userMsg = { ok: true, text: `${name} added.`, forProduct: true };
+  UI.userMsg = { ok: true, text: qty > 0 ? `${name} added — ${qty} imeingia ${store === "godown" ? "Godown" : "Dukani"}.` : `${name} added.`, forProduct: true };
   rerender();
 }
 function saveProductPrice(id) {
