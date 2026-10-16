@@ -2952,16 +2952,8 @@ function saleRowHint(f, r) {
   const stockItem = saleStockItem(f, r.itemName);
   if (!stockItem) return `<span style="color:#dc2636">⚠️ Not found in ${f.store === "godown" ? "Godown" : "Dukani"} stock</span>`;
   const available = qtyOf(stockItem.id);
-  const buyP = buyPriceOf(stockItem);
-  let txt = `${available} in stock`;
-  if (buyP == null) return txt + " · no buying price on record (set it in Products or when receiving)";
-  txt += ` · bought at ${fmt(buyP)}`;
-  const sell = Number(r.price) || 0, qty = Number(r.qty) || 0;
-  if (sell > 0) {
-    const per = sell - buyP;
-    const col = per >= 0 ? "var(--green)" : "#dc2636";
-    txt += ` · <strong style="color:${col}">${per >= 0 ? "Profit" : "Loss"} ${fmt(Math.abs(per))}/unit${qty > 0 ? ` (${fmt(Math.abs(per * qty))} total)` : ""}</strong>`;
-  }
+  // buying price and profit are no longer shown here (owner's request, 2026-10-16)
+  const txt = `${available} in stock`;
   return txt;
 }
 function refreshSaleTotals(rowId) {
