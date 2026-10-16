@@ -214,11 +214,22 @@ input{font-family:inherit;}
 .receipt-total-row{display:flex;justify-content:space-between;font-weight:700;font-size:14px;padding-top:10px;margin-top:4px;}
 .modal-actions{display:flex;justify-content:center;gap:8px;}
 @media print{
-  body *{visibility:hidden;}
-  .receipt-print,.receipt-print *{visibility:visible;}
-  .receipt-print{position:absolute;top:0;left:0;width:100%;max-height:none;box-shadow:none;}
-  .no-print{display:none!important;}
+  @page{margin:5mm}
+  html,body{height:auto!important;min-height:0!important;overflow:visible!important;background:#fff!important}
+  /* Print only the copy of the receipt in #print-root; hide the whole page behind it */
+  body.printing>*:not(#print-root){display:none!important}
+  body.printing #print-root{display:block!important}
+  #print-root .receipt-print{position:static!important;width:100%;max-width:none!important;max-height:none!important;overflow:visible!important;box-shadow:none!important;border-radius:0!important;margin:0!important}
+  
+  #print-root tr{break-inside:avoid}
+  #print-root thead{display:table-header-group}
+  /* fallback for browsers without beforeprint */
+  body:not(.printing) *{visibility:hidden}
+  body:not(.printing) .receipt-print,body:not(.printing) .receipt-print *{visibility:visible}
+  body:not(.printing) .receipt-print{position:absolute;top:0;left:0;width:100%;max-height:none!important;overflow:visible!important;box-shadow:none}
+  .no-print{display:none!important}
 }
+#print-root{display:none}
 @media(max-width:800px){
   .sidebar{width:70px;}
   .sidebar .logo h2,.sidebar .logo small,.menu li span,.sidebar-bottom{display:none;}
@@ -254,5 +265,21 @@ html[data-theme="dark"] .receipt-print .field,html[data-theme="dark"] .receipt-p
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="app.js?v=43"></script>
+<script>
+/* PRINT FIX: copy the open receipt to #print-root just before printing, so only it prints, once */
+(function () {
+  var root = document.createElement("div"); root.id = "print-root";
+  document.addEventListener("DOMContentLoaded", function () { document.body.appendChild(root); });
+  window.addEventListener("beforeprint", function () {
+    var all = document.querySelectorAll("body > :not(#print-root) .receipt-print");
+    var area = all[all.length - 1];
+    if (!area) return;
+    root.innerHTML = "";
+    root.appendChild(area.cloneNode(true));
+    document.body.classList.add("printing");
+  });
+  window.addEventListener("afterprint", function () { document.body.classList.remove("printing"); root.innerHTML = ""; });
+})();
+</script>
 </body>
 </html>
