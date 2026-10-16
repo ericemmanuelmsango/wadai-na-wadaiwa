@@ -2952,9 +2952,11 @@ function saleRowHint(f, r) {
   const stockItem = saleStockItem(f, r.itemName);
   if (!stockItem) return `<span style="color:#dc2636">⚠️ Not found in ${f.store === "godown" ? "Godown" : "Dukani"} stock</span>`;
   const available = qtyOf(stockItem.id);
-  // buying price and profit are no longer shown here (owner's request, 2026-10-16)
+  const buyP = buyPriceOf(stockItem);
   const txt = `${available} in stock`;
-  return txt;
+  if (buyP == null) return txt + " · no buying price on record (set it in Products or when receiving)";
+  // profit/loss is no longer shown here (owner's request, 2026-10-16); buying price stays
+  return txt + ` · bought at ${fmt(buyP)}`;
 }
 function refreshSaleTotals(rowId) {
   const f = UI.saleForm;
