@@ -3299,6 +3299,7 @@ function renderReports() {
   const expTotal = expensesIn(from, to).filter((x) => inView(x.createdAt || Date.parse((x.date || "1970-01-01") + "T00:00:00"))).reduce((s, x) => s + x.amount, 0);
   const posRevenue = 0;   // POS sales are now included in the report itself (reportLines)
   const netProfit = profit - expTotal;
+  window.__rep = { from: UI.plFrom || "", to: UI.plTo || "", lines: salesInRange, revenue, cost, profit, expTotal, netProfit, showHist, effBuy };
 
   const totalCapital = STATE.stockItems.reduce((s, it) => {
     const qty = qtyOf(it.id);
@@ -3356,7 +3357,7 @@ function renderReports() {
   <div class="panel" id="sales-report-print" style="margin-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <h3 style="margin:0">💰 Sales Report &amp; Profit / Loss</h3>
-      <button class="btn btn-sm btn-primary no-print" onclick="window.print()">🖨️ Print</button>
+      <span class="no-print" style="display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="downloadReportPdf()">📄 PDF</button><button class="btn btn-sm btn-ghost" onclick="printReport()">🖨️ Print</button></span>
     </div>
     <div class="discount-mode-toggle no-print" style="margin:10px 0">
       <button class="chip-btn" onclick="setPLPreset(1)">Today</button>
@@ -3396,6 +3397,77 @@ function renderReports() {
       </tbody>
     </table>`}
   </div>`;
+}
+
+/* ---------- Reports: PDF to open on the phone, and Print of the report (owner's request, 2026-10-19) ---------- */
+function repShopName() { return "E.E.MSANGO COMPANY LIMITED"; }
+function loadScriptOnce(src) {
+  return new Promise((ok, bad) => {
+    if (document.querySelector('script[src="' + src + '"]')) return ok();
+    const el = document.createElement("script"); el.src = src; el.onload = ok; el.onerror = () => bad(new Error("load " + src));
+    document.head.appendChild(el);
+  });
+}
+async function downloadReportPdf() {
+  const R = window.__rep;
+  if (!R) return;
+  try {
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js");
+  } catch (e) { alert("Imeshindikana kupakua PDF — angalia internet kisha jaribu tena."); return; }
+  const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+  const tz = (n) => "TSh " + Math.round(n).toLocaleString("en-US");
+  const sg = (n) => (n < 0 ? "-" : "") + tz(Math.abs(n));
+  const cust = (x) => (x.customer && x.customer.trim()) || "Mteja wa kawaida";
+  const profitOf = (x) => { const b = R.effBuy(x); return b != null ? (x.sellPrice - b) * x.qty : x.total; };
+  const group = (keyFn, newestFirst) => {
+    const g = {};
+    R.lines.forEach((x) => { const k = keyFn(x); (g[k] = g[k] || { k, n: 0, total: 0, profit: 0 }); g[k].n++; g[k].total += x.total; g[k].profit += profitOf(x); });
+    return Object.values(g).sort((a, b) => newestFirst ? (a.k < b.k ? 1 : -1) : b.total - a.total);
+  };
+  const period = R.from || R.to ? (R.from || "mwanzo") + " hadi " + (R.to || "leo") : "Mauzo yote";
+  doc.setFontSize(15); doc.text(repShopName(), 14, 16);
+  doc.setFontSize(11); doc.text("Ripoti ya Mauzo na Faida" + (R.showHist ? " (History)" : ""), 14, 23);
+  doc.setFontSize(9); doc.setTextColor(110);
+  doc.text("Kipindi: " + period + "   |   Imetolewa: " + new Date().toLocaleString("en-GB"), 14, 29);
+  doc.setTextColor(0);
+  const head = { fillColor: [15, 31, 61], textColor: 255, fontStyle: "bold" };
+  const right = (cols) => Object.fromEntries(cols.map((c) => [c, { halign: "right" }]));
+  const headRight = (cols) => (d) => { if (d.section === "head" && cols.includes(d.column.index)) d.cell.styles.halign = "right"; };
+  doc.autoTable({ startY: 34, theme: "grid", headStyles: head, columnStyles: right([1]),
+    head: [["Muhtasari", "Kiasi"]],
+    body: [["Mauzo (Revenue)", tz(R.revenue)], ["Gharama ya bidhaa", tz(R.cost)], ["Faida ghafi (Gross)", sg(R.profit)], ["Matumizi", tz(R.expTotal)], ["FAIDA HALISI", sg(R.netProfit)]],
+    didParseCell: (d) => { headRight([1])(d); if (d.section === "body" && d.row.index === 4) d.cell.styles.fontStyle = "bold"; } });
+  const table = (title, label, rows) => {
+    doc.setFontSize(11); doc.text(title, 14, doc.lastAutoTable.finalY + 10);
+    doc.autoTable({ startY: doc.lastAutoTable.finalY + 13, theme: "striped", headStyles: head, columnStyles: right([1, 2, 3]), didParseCell: headRight([1, 2, 3]),
+      head: [[label, "Idadi", "Mauzo", "Faida"]],
+      body: rows.map((r) => [r.k, r.n, tz(r.total), sg(r.profit)]),
+      foot: [["JUMLA", rows.reduce((a, r) => a + r.n, 0), tz(rows.reduce((a, r) => a + r.total, 0)), sg(rows.reduce((a, r) => a + r.profit, 0))]],
+      footStyles: { fillColor: [235, 239, 245], textColor: 20, fontStyle: "bold", halign: "right" } });
+  };
+  if (!R.lines.length) { doc.setFontSize(11); doc.text("Hakuna mauzo kwenye kipindi hiki.", 14, doc.lastAutoTable.finalY + 10); }
+  else {
+    table("Mauzo kwa Siku", "Tarehe", group((x) => x.date, true));
+    table("Mauzo kwa Mteja", "Mteja", group(cust, false));
+    doc.setFontSize(11); doc.text("Kila Bidhaa", 14, doc.lastAutoTable.finalY + 10);
+    doc.autoTable({ startY: doc.lastAutoTable.finalY + 13, theme: "striped", headStyles: head, styles: { fontSize: 8 }, columnStyles: right([3, 4, 5]), didParseCell: headRight([3, 4, 5]),
+      head: [["Tarehe", "Mteja", "Bidhaa", "Idadi", "Mauzo", "Faida"]],
+      body: [...R.lines].sort((a, b) => (a.date < b.date ? 1 : -1)).map((x) => [x.date, cust(x), x.itemName, x.qty, tz(x.total), R.effBuy(x) != null ? sg(profitOf(x)) : sg(profitOf(x)) + " *"]) });
+    if (R.lines.some((x) => R.effBuy(x) == null)) { doc.setFontSize(8); doc.setTextColor(150, 100, 0); doc.text("* Bidhaa haina bei ya kununulia, kwa hiyo faida yake si sahihi.", 14, doc.lastAutoTable.finalY + 6); }
+  }
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text("Ukurasa " + i + " / " + n, 196, 290, { align: "right" }); }
+  doc.save("Ripoti-Mauzo-" + todayStr() + (R.showHist ? "-History" : "") + ".pdf");
+}
+function printReport() {
+  const el = document.getElementById("sales-report-print");
+  if (!el) return;
+  el.classList.add("receipt-print");          // the print helper prints only .receipt-print
+  const done = () => { el.classList.remove("receipt-print"); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 60000);
 }
 
 /* ---------- Reports: one list of sales from this system + the POS (owner's request, 2026-10-19) ---------- */
