@@ -3195,7 +3195,7 @@ function submitSale() {
     STATE.stockMovements.push({ id: movementId, itemId: stockItem.id, type: "out", qty, destination: "Sale", date: f.date });
     STATE.sales.push({
       id: uid(), itemId: stockItem.id, itemName: stockItem.name, sellPrice: price, qty,
-      total: price * qty, buyPrice, date: f.date || todayStr(), movementId, store: f.store, customer: f.customer.trim(),
+      total: price * qty, buyPrice, date: f.date || todayStr(), movementId, store: f.store, customer: f.customer.trim(), createdAt: Date.now(),
     });
   });
   saveStockMovements();
@@ -3287,14 +3287,17 @@ function renderReports() {
 
   const from = UI.plFrom || "0000-01-01";
   const to = UI.plTo || "9999-12-31";
-  const salesInRange = STATE.sales.filter((s) => s.date >= from && s.date <= to).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const cutAt = Number(STATE.settings.reportClearedAt) || 0;      // "Futa" moves everything up to this moment into History
+  const showHist = !!UI.plHistory;
+  const inView = (ts) => (showHist ? ts <= cutAt : ts > cutAt);
+  const salesInRange = reportLines().filter((s) => s.date >= from && s.date <= to && inView(s.ts)).sort((a, b) => (a.date < b.date ? 1 : -1));
   const revenue = salesInRange.reduce((s, x) => s + x.total, 0);
   const effBuy = (x) => (x.buyPrice != null ? x.buyPrice : buyPriceOf(itemById(x.itemId)));
   const cost = salesInRange.reduce((s, x) => { const b = effBuy(x); return s + (b != null ? b * x.qty : 0); }, 0);
   const unknownCostCount = salesInRange.filter((x) => effBuy(x) == null).length;
   const profit = revenue - cost;
-  const expTotal = expensesIn(from, to).reduce((s, x) => s + x.amount, 0);
-  const posRevenue = (STATE.posSales || []).filter((x) => !x.deleted && (x.date || "") >= from && (x.date || "") <= to).reduce((s, x) => s + (Number(x.total) || 0), 0);
+  const expTotal = expensesIn(from, to).filter((x) => inView(x.createdAt || Date.parse((x.date || "1970-01-01") + "T00:00:00"))).reduce((s, x) => s + x.amount, 0);
+  const posRevenue = 0;   // POS sales are now included in the report itself (reportLines)
   const netProfit = profit - expTotal;
 
   const totalCapital = STATE.stockItems.reduce((s, it) => {
@@ -3375,7 +3378,7 @@ function renderReports() {
     </div>
     ${posRevenue > 0 ? `<p style="font-size:11.5px;color:#6b7280;margin:-6px 0 10px">POS sales in this range: <b>${fmt(posRevenue)}</b> (shown in the POS reports).</p>` : ""}
     ${unknownCostCount > 0 ? `<p style="font-size:11.5px;color:#b8862f;margin-bottom:10px">⚠️ ${unknownCostCount} sale(s) in this range have no known buying price (item was never received with a price in Main Store), so cost/profit may be understated.</p>` : ""}
-    ${plViewTabs()}
+    ${plViewTabs()}${plHistoryBar(cutAt, showHist, salesInRange.length)}
     ${(UI.plView || "day") === "day" ? plGroupTable(salesInRange, (x) => x.date, "Tarehe", effBuy, true)
       : UI.plView === "customer" ? plGroupTable(salesInRange, (x) => (x.customer && x.customer.trim()) || "Mteja wa kawaida", "Mteja", effBuy, false)
       : `<table class="recent-table" style="width:100%">
@@ -3393,6 +3396,39 @@ function renderReports() {
       </tbody>
     </table>`}
   </div>`;
+}
+
+/* ---------- Reports: one list of sales from this system + the POS (owner's request, 2026-10-19) ---------- */
+function reportLines() {
+  const day = (d) => Date.parse((d || "1970-01-01") + "T00:00:00");
+  const out = STATE.sales.map((x) => ({ ...x, ts: x.createdAt || day(x.date) }));
+  (STATE.posSales || []).filter((x) => !x.deleted).forEach((x) => (x.items || []).forEach((i, n) => out.push({
+    id: x.id + "#" + n, itemId: i.itemId, itemName: i.name, qty: Number(i.qty) || 0, sellPrice: Number(i.price) || 0,
+    total: i.lineTotal != null ? Number(i.lineTotal) : (Number(i.price) || 0) * (Number(i.qty) || 0),
+    buyPrice: i.buy != null ? Number(i.buy) : null, date: x.date || "", customer: x.customer || "", ts: x.createdAt || day(x.date), pos: true,
+  })));
+  return out;
+}
+function plHistoryBar(cutAt, showHist, n) {
+  if (showHist) return `<div class="no-print" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:#fff7e6;border:1px solid #f3d9a4;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12.5px;color:#7a4a00">
+    <span>🗄️ <b>History</b> — mauzo uliyoyafuta kwenye ripoti${cutAt ? " (hadi " + new Date(cutAt).toLocaleString("sw-TZ") + ")" : ""}</span>
+    <span style="display:flex;gap:6px">${STATE.settings.reportPrevClearedAt != null ? `<button class="btn btn-sm btn-ghost" onclick="undoReportClear()">↩️ Rudisha ya mwisho</button>` : ""}<button class="btn btn-sm btn-primary" onclick="UI.plHistory=false;UI.plOpen=null;rerender();">← Ripoti ya sasa</button></span></div>`;
+  return `<div class="no-print" style="display:flex;justify-content:flex-end;gap:6px;margin:-4px 0 10px;flex-wrap:wrap">
+    <button class="btn btn-sm btn-ghost" onclick="UI.plHistory=true;UI.plOpen=null;rerender();">🗄️ History</button>
+    ${n ? `<button class="btn btn-sm btn-ghost" style="color:#dc2636" onclick="clearReport()">🧹 Futa (hamishia History)</button>` : ""}</div>`;
+}
+function clearReport() {
+  if (!confirm("Mauzo yote yaliyopo kwenye ripoti hadi sasa yatahamia 🗄️ History.\nHayafutwi kabisa, na stock haiguswi. Endelea?")) return;
+  STATE.settings.reportPrevClearedAt = Number(STATE.settings.reportClearedAt) || 0;
+  STATE.settings.reportClearedAt = Date.now();
+  saveSettings(); UI.plOpen = null; rerender();
+}
+function undoReportClear() {
+  if (STATE.settings.reportPrevClearedAt == null) return;
+  if (!confirm("Rudisha mauzo ya ufutaji wa mwisho kwenye ripoti ya sasa?")) return;
+  STATE.settings.reportClearedAt = STATE.settings.reportPrevClearedAt;
+  STATE.settings.reportPrevClearedAt = null;
+  saveSettings(); UI.plOpen = null; rerender();
 }
 
 /* ---------- Reports: sales grouped by day or by customer (owner's request, 2026-10-19) ---------- */
