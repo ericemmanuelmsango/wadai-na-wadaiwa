@@ -3375,7 +3375,10 @@ function renderReports() {
     </div>
     ${posRevenue > 0 ? `<p style="font-size:11.5px;color:#6b7280;margin:-6px 0 10px">POS sales in this range: <b>${fmt(posRevenue)}</b> (shown in the POS reports).</p>` : ""}
     ${unknownCostCount > 0 ? `<p style="font-size:11.5px;color:#b8862f;margin-bottom:10px">⚠️ ${unknownCostCount} sale(s) in this range have no known buying price (item was never received with a price in Main Store), so cost/profit may be understated.</p>` : ""}
-    <table class="recent-table" style="width:100%">
+    ${plViewTabs()}
+    ${(UI.plView || "day") === "day" ? plGroupTable(salesInRange, (x) => x.date, "Tarehe", effBuy, true)
+      : UI.plView === "customer" ? plGroupTable(salesInRange, (x) => (x.customer && x.customer.trim()) || "Mteja wa kawaida", "Mteja", effBuy, false)
+      : `<table class="recent-table" style="width:100%">
       <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Qty</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Sold @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Bought @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Profit</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Date</th></tr></thead>
       <tbody>
         ${salesInRange.length === 0 ? `<tr><td colspan="6" style="padding:14px;text-align:center;color:#a3aebe">No sales in this date range.</td></tr>` : salesInRange.map((s) => `
@@ -3388,8 +3391,46 @@ function renderReports() {
             <td style="padding:8px 6px;text-align:right;color:#8290a4">${s.date}</td>
           </tr>`).join("")}
       </tbody>
-    </table>
+    </table>`}
   </div>`;
+}
+
+/* ---------- Reports: sales grouped by day or by customer (owner's request, 2026-10-19) ---------- */
+function plViewTabs() {
+  const v = UI.plView || "day";
+  const b = (k, label) => `<button class="chip-btn" style="${v === k ? "background:var(--navy,#0f1f3d);color:#fff" : ""}" onclick="UI.plView='${k}';UI.plOpen=null;rerender();">${label}</button>`;
+  return `<div class="discount-mode-toggle no-print" style="margin:6px 0 12px">${b("day", "📅 Kwa Siku")}${b("customer", "👤 Kwa Mteja")}${b("item", "📦 Kila Bidhaa")}</div>`;
+}
+function plGroupTable(sales, keyFn, label, effBuy, newestFirst) {
+  const groups = {};
+  sales.forEach((x) => { const k = keyFn(x); (groups[k] = groups[k] || []).push(x); });
+  const rows = Object.keys(groups).map((k) => {
+    const list = groups[k];
+    const total = list.reduce((a, x) => a + x.total, 0);
+    const profit = list.reduce((a, x) => { const b = effBuy(x); return a + (b != null ? (x.sellPrice - b) * x.qty : x.total); }, 0);   // same rule as the Gross Profit card: unknown cost counts as 0
+    const unknown = list.some((x) => effBuy(x) == null);
+    return { k, list, total, profit, unknown };
+  });
+  rows.sort((a, b) => newestFirst ? (a.k < b.k ? 1 : -1) : b.total - a.total);
+  if (!rows.length) return `<p class="empty-note">Hakuna mauzo kwenye kipindi hiki.</p>`;
+  const th = (t, r) => `<th style="text-align:${r ? "right" : "left"};font-size:10.5px;color:#8290a4;padding:6px">${t}</th>`;
+  const money = (n) => `<span style="font-weight:700;color:${n >= 0 ? "var(--green)" : "#dc2636"}">${n < 0 ? "−" : ""}${fmt(Math.abs(n))}</span>`;
+  const sumT = rows.reduce((a, r) => a + r.total, 0), sumP = rows.reduce((a, r) => a + r.profit, 0);
+  return `<table class="recent-table" style="width:100%">
+    <thead><tr>${th(label)}${th("Mauzo", 1)}${th("Faida", 1)}</tr></thead>
+    <tbody>${rows.map((r, i) => {
+      const id = label + "-" + i + "-" + r.list.length, open = UI.plOpen === id;
+      return `<tr style="cursor:pointer" onclick="UI.plOpen=${open ? "null" : `'${id}'`};rerender();">
+        <td style="padding:8px 6px">${open ? "▾" : "▸"} ${esc(r.k)} <span style="color:#8290a4;font-size:11px">(${r.list.length})</span></td>
+        <td style="padding:8px 6px;text-align:right">${fmt(r.total)}</td>
+        <td style="padding:8px 6px;text-align:right">${money(r.profit)}${r.unknown ? `<span title="Baadhi ya bidhaa hazina bei ya kununulia" style="color:#b8862f"> *</span>` : ""}</td></tr>
+      ${open ? r.list.map((x) => { const b = effBuy(x); return `<tr style="background:var(--paper-alt,#f6f8fb);font-size:12px">
+        <td style="padding:5px 6px 5px 22px">${esc(x.itemName)} × ${x.qty} <span style="color:#8290a4">· ${label === "Tarehe" ? esc((x.customer && x.customer.trim()) || "Mteja wa kawaida") : x.date}</span></td>
+        <td style="padding:5px 6px;text-align:right">${fmt(x.total)}</td>
+        <td style="padding:5px 6px;text-align:right">${b != null ? money((x.sellPrice - b) * x.qty) : `${money(x.total)}<span style="color:#b8862f"> *</span>`}</td></tr>`; }).join("") : ""}`;
+    }).join("")}</tbody>
+    <tfoot><tr style="border-top:2px solid var(--line)"><td style="padding:8px 6px;font-weight:800">JUMLA</td><td style="padding:8px 6px;text-align:right;font-weight:800">${fmt(sumT)}</td><td style="padding:8px 6px;text-align:right">${money(sumP)}</td></tr></tfoot>
+  </table>`;
 }
 
 /* ---------- SETTINGS ---------- */
