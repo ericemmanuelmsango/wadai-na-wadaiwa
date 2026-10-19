@@ -3287,10 +3287,10 @@ function renderReports() {
 
   const from = UI.plFrom || "0000-01-01";
   const to = UI.plTo || "9999-12-31";
-  const cutAt = Number(STATE.settings.reportClearedAt) || 0;      // "Futa" moves everything up to this moment into History
+  const cutAt = Number(STATE.settings.reportClearedAt) || 0;      // old "Futa zote" (before 2026-10-19 14:00); kept so nothing jumps back
   const showHist = !!UI.plHistory;
   const inView = (ts) => (showHist ? ts <= cutAt : ts > cutAt);
-  const salesInRange = reportLines().filter((s) => s.date >= from && s.date <= to && inView(s.ts)).sort((a, b) => (a.date < b.date ? 1 : -1));
+  const salesInRange = reportLines().filter((s) => s.date >= from && s.date <= to && repArchived(s) === showHist).sort((a, b) => (a.date < b.date ? 1 : -1));
   const revenue = salesInRange.reduce((s, x) => s + x.total, 0);
   const effBuy = (x) => (x.buyPrice != null ? x.buyPrice : buyPriceOf(itemById(x.itemId)));
   const cost = salesInRange.reduce((s, x) => { const b = effBuy(x); return s + (b != null ? b * x.qty : 0); }, 0);
@@ -3299,7 +3299,6 @@ function renderReports() {
   const expTotal = expensesIn(from, to).filter((x) => inView(x.createdAt || Date.parse((x.date || "1970-01-01") + "T00:00:00"))).reduce((s, x) => s + x.amount, 0);
   const posRevenue = 0;   // POS sales are now included in the report itself (reportLines)
   const netProfit = profit - expTotal;
-  window.__rep = { from: UI.plFrom || "", to: UI.plTo || "", lines: salesInRange, revenue, cost, profit, expTotal, netProfit, showHist, effBuy };
 
   const totalCapital = STATE.stockItems.reduce((s, it) => {
     const qty = qtyOf(it.id);
@@ -3357,7 +3356,7 @@ function renderReports() {
   <div class="panel" id="sales-report-print" style="margin-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <h3 style="margin:0">💰 Sales Report &amp; Profit / Loss</h3>
-      <span class="no-print" style="display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="downloadReportPdf()">📄 PDF</button><button class="btn btn-sm btn-ghost" onclick="printReport()">🖨️ Print</button></span>
+      <span class="no-print" style="display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="UI.pdfOpen=!UI.pdfOpen;rerender();">📄 PDF</button><button class="btn btn-sm btn-ghost" onclick="printReport()">🖨️ Print</button></span>
     </div>
     <div class="discount-mode-toggle no-print" style="margin:10px 0">
       <button class="chip-btn" onclick="setPLPreset(1)">Today</button>
@@ -3379,9 +3378,10 @@ function renderReports() {
     </div>
     ${posRevenue > 0 ? `<p style="font-size:11.5px;color:#6b7280;margin:-6px 0 10px">POS sales in this range: <b>${fmt(posRevenue)}</b> (shown in the POS reports).</p>` : ""}
     ${unknownCostCount > 0 ? `<p style="font-size:11.5px;color:#b8862f;margin-bottom:10px">⚠️ ${unknownCostCount} sale(s) in this range have no known buying price (item was never received with a price in Main Store), so cost/profit may be understated.</p>` : ""}
-    ${plViewTabs()}${plHistoryBar(cutAt, showHist, salesInRange.length)}
-    ${(UI.plView || "day") === "day" ? plGroupTable(salesInRange, (x) => x.date, "Tarehe", effBuy, true)
-      : UI.plView === "customer" ? plGroupTable(salesInRange, (x) => (x.customer && x.customer.trim()) || "Mteja wa kawaida", "Mteja", effBuy, false)
+    ${UI.pdfOpen ? pdfPanel() : ""}
+    ${plViewTabs()}${plHistoryBar(showHist)}
+    ${(UI.plView || "day") === "day" ? plGroupTable(salesInRange, (x) => x.date, "Tarehe", effBuy, true, "d", showHist)
+      : UI.plView === "customer" ? plGroupTable(salesInRange, repCust, "Mteja", effBuy, false, "c", showHist)
       : `<table class="recent-table" style="width:100%">
       <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Qty</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Sold @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Bought @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Profit</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Date</th></tr></thead>
       <tbody>
@@ -3399,78 +3399,20 @@ function renderReports() {
   </div>`;
 }
 
-/* ---------- Reports: PDF to open on the phone, and Print of the report (owner's request, 2026-10-19) ---------- */
+/* ---------- Reports (owner's requests, 2026-10-19) ----------
+   - Sales from this system + the POS in one list (reportLines)
+   - "Hamishia History" per customer or per day: settings.repArch["c:<name>"] / ["d:<date>"] = time it was done.
+     Sales made after that time show again; nothing is deleted and stock is never touched.
+   - PDF with dates the owner picks (and one customer if wanted), each customer with his own items. */
 function repShopName() { return "E.E.MSANGO COMPANY LIMITED"; }
-function loadScriptOnce(src) {
-  return new Promise((ok, bad) => {
-    if (document.querySelector('script[src="' + src + '"]')) return ok();
-    const el = document.createElement("script"); el.src = src; el.onload = ok; el.onerror = () => bad(new Error("load " + src));
-    document.head.appendChild(el);
-  });
+function repCust(x) { return (x.customer && String(x.customer).trim()) || "Mteja wa kawaida"; }
+function repEffBuy(x) { return x.buyPrice != null ? x.buyPrice : buyPriceOf(itemById(x.itemId)); }
+function repProfit(x) { const b = repEffBuy(x); return b != null ? (x.sellPrice - b) * x.qty : x.total; }   // same rule as the Gross Profit card
+function repArchived(x) {
+  const A = STATE.settings.repArch || {};
+  const cut = Number(STATE.settings.reportClearedAt) || 0;
+  return x.ts <= cut || x.ts <= (A["c:" + repCust(x)] || 0) || x.ts <= (A["d:" + x.date] || 0);
 }
-async function downloadReportPdf() {
-  const R = window.__rep;
-  if (!R) return;
-  try {
-    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
-    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js");
-  } catch (e) { alert("Imeshindikana kupakua PDF — angalia internet kisha jaribu tena."); return; }
-  const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
-  const tz = (n) => "TSh " + Math.round(n).toLocaleString("en-US");
-  const sg = (n) => (n < 0 ? "-" : "") + tz(Math.abs(n));
-  const cust = (x) => (x.customer && x.customer.trim()) || "Mteja wa kawaida";
-  const profitOf = (x) => { const b = R.effBuy(x); return b != null ? (x.sellPrice - b) * x.qty : x.total; };
-  const group = (keyFn, newestFirst) => {
-    const g = {};
-    R.lines.forEach((x) => { const k = keyFn(x); (g[k] = g[k] || { k, n: 0, total: 0, profit: 0 }); g[k].n++; g[k].total += x.total; g[k].profit += profitOf(x); });
-    return Object.values(g).sort((a, b) => newestFirst ? (a.k < b.k ? 1 : -1) : b.total - a.total);
-  };
-  const period = R.from || R.to ? (R.from || "mwanzo") + " hadi " + (R.to || "leo") : "Mauzo yote";
-  doc.setFontSize(15); doc.text(repShopName(), 14, 16);
-  doc.setFontSize(11); doc.text("Ripoti ya Mauzo na Faida" + (R.showHist ? " (History)" : ""), 14, 23);
-  doc.setFontSize(9); doc.setTextColor(110);
-  doc.text("Kipindi: " + period + "   |   Imetolewa: " + new Date().toLocaleString("en-GB"), 14, 29);
-  doc.setTextColor(0);
-  const head = { fillColor: [15, 31, 61], textColor: 255, fontStyle: "bold" };
-  const right = (cols) => Object.fromEntries(cols.map((c) => [c, { halign: "right" }]));
-  const headRight = (cols) => (d) => { if (d.section === "head" && cols.includes(d.column.index)) d.cell.styles.halign = "right"; };
-  doc.autoTable({ startY: 34, theme: "grid", headStyles: head, columnStyles: right([1]),
-    head: [["Muhtasari", "Kiasi"]],
-    body: [["Mauzo (Revenue)", tz(R.revenue)], ["Gharama ya bidhaa", tz(R.cost)], ["Faida ghafi (Gross)", sg(R.profit)], ["Matumizi", tz(R.expTotal)], ["FAIDA HALISI", sg(R.netProfit)]],
-    didParseCell: (d) => { headRight([1])(d); if (d.section === "body" && d.row.index === 4) d.cell.styles.fontStyle = "bold"; } });
-  const table = (title, label, rows) => {
-    doc.setFontSize(11); doc.text(title, 14, doc.lastAutoTable.finalY + 10);
-    doc.autoTable({ startY: doc.lastAutoTable.finalY + 13, theme: "striped", headStyles: head, columnStyles: right([1, 2, 3]), didParseCell: headRight([1, 2, 3]),
-      head: [[label, "Idadi", "Mauzo", "Faida"]],
-      body: rows.map((r) => [r.k, r.n, tz(r.total), sg(r.profit)]),
-      foot: [["JUMLA", rows.reduce((a, r) => a + r.n, 0), tz(rows.reduce((a, r) => a + r.total, 0)), sg(rows.reduce((a, r) => a + r.profit, 0))]],
-      footStyles: { fillColor: [235, 239, 245], textColor: 20, fontStyle: "bold", halign: "right" } });
-  };
-  if (!R.lines.length) { doc.setFontSize(11); doc.text("Hakuna mauzo kwenye kipindi hiki.", 14, doc.lastAutoTable.finalY + 10); }
-  else {
-    table("Mauzo kwa Siku", "Tarehe", group((x) => x.date, true));
-    table("Mauzo kwa Mteja", "Mteja", group(cust, false));
-    doc.setFontSize(11); doc.text("Kila Bidhaa", 14, doc.lastAutoTable.finalY + 10);
-    doc.autoTable({ startY: doc.lastAutoTable.finalY + 13, theme: "striped", headStyles: head, styles: { fontSize: 8 }, columnStyles: right([3, 4, 5]), didParseCell: headRight([3, 4, 5]),
-      head: [["Tarehe", "Mteja", "Bidhaa", "Idadi", "Mauzo", "Faida"]],
-      body: [...R.lines].sort((a, b) => (a.date < b.date ? 1 : -1)).map((x) => [x.date, cust(x), x.itemName, x.qty, tz(x.total), R.effBuy(x) != null ? sg(profitOf(x)) : sg(profitOf(x)) + " *"]) });
-    if (R.lines.some((x) => R.effBuy(x) == null)) { doc.setFontSize(8); doc.setTextColor(150, 100, 0); doc.text("* Bidhaa haina bei ya kununulia, kwa hiyo faida yake si sahihi.", 14, doc.lastAutoTable.finalY + 6); }
-  }
-  const n = doc.getNumberOfPages();
-  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text("Ukurasa " + i + " / " + n, 196, 290, { align: "right" }); }
-  doc.save("Ripoti-Mauzo-" + todayStr() + (R.showHist ? "-History" : "") + ".pdf");
-}
-function printReport() {
-  const el = document.getElementById("sales-report-print");
-  if (!el) return;
-  el.classList.add("receipt-print");          // the print helper prints only .receipt-print
-  const done = () => { el.classList.remove("receipt-print"); window.removeEventListener("afterprint", done); };
-  window.addEventListener("afterprint", done);
-  window.print();
-  setTimeout(done, 60000);
-}
-
-/* ---------- Reports: one list of sales from this system + the POS (owner's request, 2026-10-19) ---------- */
 function reportLines() {
   const day = (d) => Date.parse((d || "1970-01-01") + "T00:00:00");
   const out = STATE.sales.map((x) => ({ ...x, ts: x.createdAt || day(x.date) }));
@@ -3481,64 +3423,182 @@ function reportLines() {
   })));
   return out;
 }
-function plHistoryBar(cutAt, showHist, n) {
+function plHistoryBar(showHist) {
   if (showHist) return `<div class="no-print" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:#fff7e6;border:1px solid #f3d9a4;border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12.5px;color:#7a4a00">
-    <span>🗄️ <b>History</b> — mauzo uliyoyafuta kwenye ripoti${cutAt ? " (hadi " + new Date(cutAt).toLocaleString("sw-TZ") + ")" : ""}</span>
-    <span style="display:flex;gap:6px">${STATE.settings.reportPrevClearedAt != null ? `<button class="btn btn-sm btn-ghost" onclick="undoReportClear()">↩️ Rudisha ya mwisho</button>` : ""}<button class="btn btn-sm btn-primary" onclick="UI.plHistory=false;UI.plOpen=null;rerender();">← Ripoti ya sasa</button></span></div>`;
-  return `<div class="no-print" style="display:flex;justify-content:flex-end;gap:6px;margin:-4px 0 10px;flex-wrap:wrap">
-    <button class="btn btn-sm btn-ghost" onclick="UI.plHistory=true;UI.plOpen=null;rerender();">🗄️ History</button>
-    ${n ? `<button class="btn btn-sm btn-ghost" style="color:#dc2636" onclick="clearReport()">🧹 Futa (hamishia History)</button>` : ""}</div>`;
+    <span>🗄️ <b>History</b> — wateja na siku ulizohamishia hapa. Bonyeza ↩️ kurudisha.</span>
+    <span style="display:flex;gap:6px">${STATE.settings.reportPrevClearedAt != null && Number(STATE.settings.reportClearedAt) > 0 ? `<button class="btn btn-sm btn-ghost" onclick="undoReportClear()">↩️ Rudisha zote za awali</button>` : ""}<button class="btn btn-sm btn-primary" onclick="UI.plHistory=false;UI.plOpen=null;rerender();">← Ripoti ya sasa</button></span></div>`;
+  return `<div class="no-print" style="display:flex;justify-content:flex-end;margin:-4px 0 10px"><button class="btn btn-sm btn-ghost" onclick="UI.plHistory=true;UI.plOpen=null;rerender();">🗄️ History</button></div>`;
 }
-function clearReport() {
-  if (!confirm("Mauzo yote yaliyopo kwenye ripoti hadi sasa yatahamia 🗄️ History.\nHayafutwi kabisa, na stock haiguswi. Endelea?")) return;
-  STATE.settings.reportPrevClearedAt = Number(STATE.settings.reportClearedAt) || 0;
-  STATE.settings.reportClearedAt = Date.now();
+function archiveReportRow(kind, i, ev) {
+  if (ev) ev.stopPropagation();
+  const key = (window.__plKeys || [])[i];
+  if (key == null) return;
+  const what = kind === "c" ? "ya mteja " + key : "ya tarehe " + key;
+  if (!confirm("Hamishia History mauzo " + what + "?\nHayafutwi kabisa na stock haiguswi. Mauzo mapya yataonekana kama kawaida.")) return;
+  STATE.settings.repArch = { ...(STATE.settings.repArch || {}), [kind + ":" + key]: Date.now() };
+  saveSettings(); UI.plOpen = null; rerender();
+}
+function restoreReportRow(kind, i, ev) {
+  if (ev) ev.stopPropagation();
+  const key = (window.__plKeys || [])[i];
+  if (key == null) return;
+  const A = { ...(STATE.settings.repArch || {}) };
+  delete A[kind + ":" + key];
+  STATE.settings.repArch = A;
   saveSettings(); UI.plOpen = null; rerender();
 }
 function undoReportClear() {
-  if (STATE.settings.reportPrevClearedAt == null) return;
-  if (!confirm("Rudisha mauzo ya ufutaji wa mwisho kwenye ripoti ya sasa?")) return;
-  STATE.settings.reportClearedAt = STATE.settings.reportPrevClearedAt;
+  if (!confirm("Rudisha mauzo yote yaliyofutwa kwa pamoja awali kwenye ripoti ya sasa?")) return;
+  STATE.settings.reportClearedAt = STATE.settings.reportPrevClearedAt || 0;
   STATE.settings.reportPrevClearedAt = null;
   saveSettings(); UI.plOpen = null; rerender();
 }
-
-/* ---------- Reports: sales grouped by day or by customer (owner's request, 2026-10-19) ---------- */
 function plViewTabs() {
   const v = UI.plView || "day";
   const b = (k, label) => `<button class="chip-btn" style="${v === k ? "background:var(--navy,#0f1f3d);color:#fff" : ""}" onclick="UI.plView='${k}';UI.plOpen=null;rerender();">${label}</button>`;
   return `<div class="discount-mode-toggle no-print" style="margin:6px 0 12px">${b("day", "📅 Kwa Siku")}${b("customer", "👤 Kwa Mteja")}${b("item", "📦 Kila Bidhaa")}</div>`;
 }
-function plGroupTable(sales, keyFn, label, effBuy, newestFirst) {
+function plGroupTable(sales, keyFn, label, effBuy, newestFirst, kind, showHist) {
   const groups = {};
   sales.forEach((x) => { const k = keyFn(x); (groups[k] = groups[k] || []).push(x); });
   const rows = Object.keys(groups).map((k) => {
     const list = groups[k];
     const total = list.reduce((a, x) => a + x.total, 0);
-    const profit = list.reduce((a, x) => { const b = effBuy(x); return a + (b != null ? (x.sellPrice - b) * x.qty : x.total); }, 0);   // same rule as the Gross Profit card: unknown cost counts as 0
+    const profit = list.reduce((a, x) => a + repProfit(x), 0);
     const unknown = list.some((x) => effBuy(x) == null);
     return { k, list, total, profit, unknown };
   });
   rows.sort((a, b) => newestFirst ? (a.k < b.k ? 1 : -1) : b.total - a.total);
-  if (!rows.length) return `<p class="empty-note">Hakuna mauzo kwenye kipindi hiki.</p>`;
+  window.__plKeys = rows.map((r) => r.k);
+  if (!rows.length) return `<p class="empty-note">${showHist ? "Hakuna kitu kwenye History kwa kipindi hiki." : "Hakuna mauzo kwenye kipindi hiki."}</p>`;
   const th = (t, r) => `<th style="text-align:${r ? "right" : "left"};font-size:10.5px;color:#8290a4;padding:6px">${t}</th>`;
   const money = (n) => `<span style="font-weight:700;color:${n >= 0 ? "var(--green)" : "#dc2636"}">${n < 0 ? "−" : ""}${fmt(Math.abs(n))}</span>`;
   const sumT = rows.reduce((a, r) => a + r.total, 0), sumP = rows.reduce((a, r) => a + r.profit, 0);
+  const act = (i) => showHist
+    ? `<button class="btn btn-sm btn-ghost no-print" title="Rudisha kwenye ripoti" onclick="restoreReportRow('${kind}',${i},event)">↩️</button>`
+    : `<button class="btn btn-sm btn-ghost no-print" title="Hamishia History" onclick="archiveReportRow('${kind}',${i},event)">🗄️</button>`;
   return `<table class="recent-table" style="width:100%">
-    <thead><tr>${th(label)}${th("Mauzo", 1)}${th("Faida", 1)}</tr></thead>
+    <thead><tr>${th(label)}${th("Mauzo", 1)}${th("Faida", 1)}<th class="no-print" style="width:44px"></th></tr></thead>
     <tbody>${rows.map((r, i) => {
       const id = label + "-" + i + "-" + r.list.length, open = UI.plOpen === id;
       return `<tr style="cursor:pointer" onclick="UI.plOpen=${open ? "null" : `'${id}'`};rerender();">
         <td style="padding:8px 6px">${open ? "▾" : "▸"} ${esc(r.k)} <span style="color:#8290a4;font-size:11px">(${r.list.length})</span></td>
         <td style="padding:8px 6px;text-align:right">${fmt(r.total)}</td>
-        <td style="padding:8px 6px;text-align:right">${money(r.profit)}${r.unknown ? `<span title="Baadhi ya bidhaa hazina bei ya kununulia" style="color:#b8862f"> *</span>` : ""}</td></tr>
+        <td style="padding:8px 6px;text-align:right">${money(r.profit)}${r.unknown ? `<span title="Baadhi ya bidhaa hazina bei ya kununulia" style="color:#b8862f"> *</span>` : ""}</td>
+        <td style="padding:2px 0;text-align:right">${act(i)}</td></tr>
       ${open ? r.list.map((x) => { const b = effBuy(x); return `<tr style="background:var(--paper-alt,#f6f8fb);font-size:12px">
-        <td style="padding:5px 6px 5px 22px">${esc(x.itemName)} × ${x.qty} <span style="color:#8290a4">· ${label === "Tarehe" ? esc((x.customer && x.customer.trim()) || "Mteja wa kawaida") : x.date}</span></td>
+        <td style="padding:5px 6px 5px 22px">${esc(x.itemName)} × ${x.qty} <span style="color:#8290a4">· ${kind === "d" ? esc(repCust(x)) : x.date}</span></td>
         <td style="padding:5px 6px;text-align:right">${fmt(x.total)}</td>
-        <td style="padding:5px 6px;text-align:right">${b != null ? money((x.sellPrice - b) * x.qty) : `${money(x.total)}<span style="color:#b8862f"> *</span>`}</td></tr>`; }).join("") : ""}`;
+        <td style="padding:5px 6px;text-align:right">${b != null ? money((x.sellPrice - b) * x.qty) : `${money(x.total)}<span style="color:#b8862f"> *</span>`}</td><td></td></tr>`; }).join("") : ""}`;
     }).join("")}</tbody>
-    <tfoot><tr style="border-top:2px solid var(--line)"><td style="padding:8px 6px;font-weight:800">JUMLA</td><td style="padding:8px 6px;text-align:right;font-weight:800">${fmt(sumT)}</td><td style="padding:8px 6px;text-align:right">${money(sumP)}</td></tr></tfoot>
+    <tfoot><tr style="border-top:2px solid var(--line)"><td style="padding:8px 6px;font-weight:800">JUMLA</td><td style="padding:8px 6px;text-align:right;font-weight:800">${fmt(sumT)}</td><td style="padding:8px 6px;text-align:right">${money(sumP)}</td><td></td></tr></tfoot>
   </table>`;
+}
+/* PDF: the owner picks the dates (and one customer, or all). All sales in those dates are included,
+   also those moved to History, so the PDF is a full record of the period. */
+function pdfPanel() {
+  if (UI.pdfFrom == null) UI.pdfFrom = UI.plFrom || todayStr().slice(0, 8) + "01";
+  if (UI.pdfTo == null) UI.pdfTo = UI.plTo || todayStr();
+  const names = [...new Set(reportLines().map(repCust))].sort((a, b) => a.localeCompare(b));
+  if (UI.pdfCust && !names.includes(UI.pdfCust)) UI.pdfCust = "";
+  return `<div class="no-print" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0 14px;background:var(--paper-alt,#f6f8fb)">
+    <div style="font-weight:700;margin-bottom:8px">📄 Pakua PDF — chagua tarehe</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <span style="font-size:12.5px">Kuanzia</span><input class="field field-sm" style="width:auto" type="date" value="${esc(UI.pdfFrom)}" onchange="UI.pdfFrom=this.value">
+      <span style="font-size:12.5px">hadi</span><input class="field field-sm" style="width:auto" type="date" value="${esc(UI.pdfTo)}" onchange="UI.pdfTo=this.value">
+    </div>
+    <select class="field field-sm" style="max-width:320px;margin-bottom:10px" onchange="UI.pdfCust=this.value">
+      <option value="">👥 Wateja wote</option>
+      ${names.map((n) => `<option value="${esc(n)}" ${UI.pdfCust === n ? "selected" : ""}>👤 ${esc(n)}</option>`).join("")}
+    </select>
+    <div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="downloadReportPdf()">⬇️ Pakua PDF</button><button class="btn btn-sm btn-ghost" onclick="UI.pdfOpen=false;rerender();">Funga</button></div>
+  </div>`;
+}
+function loadScriptOnce(src) {
+  return new Promise((ok, bad) => {
+    if (document.querySelector('script[src="' + src + '"]')) return ok();
+    const el = document.createElement("script"); el.src = src; el.onload = ok; el.onerror = () => bad(new Error("load " + src));
+    document.head.appendChild(el);
+  });
+}
+async function downloadReportPdf() {
+  const from = UI.pdfFrom || "0000-01-01", to = UI.pdfTo || "9999-12-31", only = UI.pdfCust || "";
+  if (from > to) { alert("Tarehe ya kuanzia iko baada ya tarehe ya mwisho."); return; }
+  const lines = reportLines().filter((x) => x.date >= from && x.date <= to && (!only || repCust(x) === only))
+    .sort((a, b) => (a.date === b.date ? (a.ts || 0) - (b.ts || 0) : a.date < b.date ? -1 : 1));
+  try {
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js");
+  } catch (e) { alert("Imeshindikana kupakua PDF — angalia internet kisha jaribu tena."); return; }
+  const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+  const tz = (n) => "TSh " + Math.round(n).toLocaleString("en-US");
+  const sg = (n) => (n < 0 ? "-" : "") + tz(Math.abs(n));
+  const head = { fillColor: [15, 31, 61], textColor: 255, fontStyle: "bold" };
+  const foot = { fillColor: [235, 239, 245], textColor: 20, fontStyle: "bold" };
+  const right = (cols) => Object.fromEntries(cols.map((c) => [c, { halign: "right" }]));
+  const headRight = (cols) => (d) => { if ((d.section === "head" || d.section === "foot") && cols.includes(d.column.index)) d.cell.styles.halign = "right"; };
+  const below = (gap) => (doc.lastAutoTable ? doc.lastAutoTable.finalY : 30) + gap;
+  const revenue = lines.reduce((a, x) => a + x.total, 0);
+  const profit = lines.reduce((a, x) => a + repProfit(x), 0);
+  const exp = only ? 0 : expensesIn(from, to).reduce((a, x) => a + x.amount, 0);
+
+  doc.setFontSize(15); doc.text(repShopName(), 14, 16);
+  doc.setFontSize(11); doc.text("Ripoti ya Mauzo na Faida" + (only ? " - " + only : ""), 14, 23);
+  doc.setFontSize(9); doc.setTextColor(110);
+  doc.text("Tarehe: " + (UI.pdfFrom || "mwanzo") + " hadi " + (UI.pdfTo || "leo") + "   |   Imetolewa: " + new Date().toLocaleString("en-GB"), 14, 29);
+  doc.setTextColor(0);
+  const sum = [["Mauzo", tz(revenue)], ["Gharama ya bidhaa", tz(revenue - profit)], ["Faida ghafi", sg(profit)]];
+  if (!only) sum.push(["Matumizi", tz(exp)], ["FAIDA HALISI", sg(profit - exp)]);
+  doc.autoTable({ startY: 33, theme: "grid", headStyles: head, columnStyles: right([1]), head: [["Muhtasari", "Kiasi"]], body: sum,
+    didParseCell: (d) => { headRight([1])(d); if (d.section === "body" && d.row.index === sum.length - 1) d.cell.styles.fontStyle = "bold"; } });
+  if (!lines.length) {
+    doc.setFontSize(11); doc.text("Hakuna mauzo kwenye tarehe hizi.", 14, below(10));
+  } else {
+    // per day
+    const days = {};
+    lines.forEach((x) => { const d = (days[x.date] = days[x.date] || { n: 0, t: 0, p: 0 }); d.n++; d.t += x.total; d.p += repProfit(x); });
+    const dk = Object.keys(days).sort();
+    let dy = below(10);
+    if (dy > 262) { doc.addPage(); dy = 18; }
+    doc.setFontSize(12); doc.text("Mauzo kwa Siku", 14, dy);
+    doc.autoTable({ startY: dy + 3, theme: "striped", headStyles: head, footStyles: foot, columnStyles: right([1, 2, 3]), didParseCell: headRight([1, 2, 3]),
+      head: [["Tarehe", "Bidhaa", "Mauzo", "Faida"]], body: dk.map((k) => [k, days[k].n, tz(days[k].t), sg(days[k].p)]),
+      foot: [["JUMLA", lines.length, tz(revenue), sg(profit)]] });
+    // per customer: name, then his items
+    const byC = {};
+    lines.forEach((x) => (byC[repCust(x)] = byC[repCust(x)] || []).push(x));
+    const ck = Object.keys(byC).sort((a, b) => byC[b].reduce((s, x) => s + x.total, 0) - byC[a].reduce((s, x) => s + x.total, 0));
+    let hy = below(12);
+    if (hy > 262) { doc.addPage(); hy = 18; }
+    doc.setFontSize(12); doc.text("Mauzo kwa Mteja", 14, hy);
+    let first = true;
+    ck.forEach((c) => {
+      const list = byC[c], t = list.reduce((s, x) => s + x.total, 0), pr = list.reduce((s, x) => s + repProfit(x), 0);
+      let y = first ? hy + 9 : below(10); first = false;
+      if (y > 270) { doc.addPage(); y = 18; }
+      doc.setFontSize(10.5); doc.setFont(undefined, "bold"); doc.text(c, 14, y); doc.setFont(undefined, "normal");
+      doc.setFontSize(9); doc.setTextColor(90); doc.text("Mauzo " + tz(t) + "   |   Faida " + sg(pr), 196, y, { align: "right" }); doc.setTextColor(0);
+      doc.autoTable({ startY: y + 2, theme: "striped", headStyles: { ...head, fillColor: [60, 80, 110] }, footStyles: foot, styles: { fontSize: 8.5 },
+        columnStyles: right([2, 3, 4, 5]), didParseCell: headRight([2, 3, 4, 5]),
+        head: [["Tarehe", "Bidhaa", "Idadi", "Bei", "Jumla", "Faida"]],
+        body: list.map((x) => [x.date, x.itemName, x.qty, tz(x.sellPrice), tz(x.total), sg(repProfit(x)) + (repEffBuy(x) == null ? " *" : "")]),
+        foot: [["", "Jumla ya " + c, list.reduce((s, x) => s + x.qty, 0), "", tz(t), sg(pr)]] });
+    });
+    if (lines.some((x) => repEffBuy(x) == null)) { doc.setFontSize(8); doc.setTextColor(150, 100, 0); doc.text("* Bidhaa haina bei ya kununulia, kwa hiyo faida yake si sahihi.", 14, below(6)); doc.setTextColor(0); }
+  }
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text("Ukurasa " + i + " / " + n, 196, 290, { align: "right" }); }
+  const safe = (only || "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  doc.save("Ripoti-" + (safe ? safe + "-" : "") + (UI.pdfFrom || "mwanzo") + "_" + (UI.pdfTo || todayStr()) + ".pdf");
+}
+function printReport() {
+  const el = document.getElementById("sales-report-print");
+  if (!el) return;
+  el.classList.add("receipt-print");          // the print helper prints only .receipt-print
+  const done = () => { el.classList.remove("receipt-print"); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 60000);
 }
 
 /* ---------- SETTINGS ---------- */
