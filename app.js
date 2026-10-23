@@ -3247,21 +3247,16 @@ function renderCustomerReceiptModal() {
   return `
   <div class="modal-overlay">
     <div class="modal-stack">
-      <div class="receipt-print">
-        <h2 class="receipt-title" style="display:flex;align-items:center;gap:8px;justify-content:center">${companyLogo(30)} Receipt</h2>
-        <div class="receipt-meta">
-          <div><strong>${esc(r.customer)}</strong></div>
-          <div>${r.store === "godown" ? "Godown" : "Dukani"}</div>
-        </div>
-        <table class="receipt-table">
-          <thead><tr><th>Item</th><th>Price</th><th>Qty</th><th>Total</th><th>Date</th></tr></thead>
-          <tbody>
-            ${r.items.map((s) => `<tr><td>${esc(s.itemName)}</td><td>${fmt(s.sellPrice)}</td><td>${s.qty}</td><td>${fmt(s.total)}</td><td>${s.date}</td></tr>`).join("")}
-          </tbody>
-        </table>
-        <div class="receipt-total-row"><span>Grand Total</span><span>${fmt(total)}</span></div>
-        <p style="text-align:center;margin-top:12px;font-size:12px;color:#4b5563;line-height:1.5">Asante kwa kutuamini! 🙏<br>Bidhaa bora kwa bei nzuri.<br>Karibu tena — tunakuthamini sana.</p>
-      </div>
+      ${(() => {
+        const dates = [...new Set(r.items.map((x) => x.date).filter(Boolean))].sort();
+        const one = dates.length <= 1;
+        return posStyleReceipt({
+          dateLine: (one ? "Tarehe: " + rcDate(dates[0] || "") : "Tarehe: " + rcDate(dates[0]) + " – " + rcDate(dates[dates.length - 1])) + " · " + (r.store === "godown" ? "Godown" : "Dukani"),
+          customer: r.customer,
+          items: r.items.map((x) => ({ name: x.itemName, qty: x.qty, price: x.sellPrice, total: x.total, sub: one ? "" : rcDate(x.date) })),
+          total,
+        });
+      })()}
       <div class="modal-actions no-print">
         <button class="btn btn-ghost" onclick="UI.customerReceipt=null;rerender();">Close</button>
         <button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>
@@ -5002,6 +4997,40 @@ function checkAlertsForNotification() {
 }
 
 /* ---------- RECEIPT ---------- */
+/* ---------- Risiti ya mtindo wa POS (sawa na EE.POS): Bidhaa | Pcs | Bei | Jumla ---------- */
+const RC_THANKS = "Asante kwa kutuamini! 🙏<br>Bidhaa bora kwa bei nzuri.<br>Karibu tena — tunakuthamini sana.";
+const rcDate = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d || "")); return m ? `${m[3]}/${m[2]}/${m[1]}` : String(d || ""); };
+const rcNum = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
+function rcShop() {
+  const shop = typeof SHOP !== "undefined" && SHOP ? SHOP : null;
+  return shop
+    ? { name: shop.name || "", line: (shop.brand && shop.brand.tagline) || "", phone: shop.phone || "", address: shop.location || "" }
+    : { name: "E.E.MSANGO COMPANY LIMITED", line: "SPEA ZA PIKIPIKI — JUMLA NA REJAREJA", phone: "", address: "" };
+}
+/** r = { dateLine, customer, phone, items:[{name, qty, price, total, sub}], total, rows:[[label, value]], note, credit } */
+function posStyleReceipt(r) {
+  const sh = rcShop();
+  return `<div class="receipt-print rcp">
+    <div class="rcp-lg">${companyLogo(54)}</div>
+    <h3>${esc(sh.name)}</h3>
+    ${sh.line ? `<div class="c b">${esc(sh.line)}</div>` : ""}
+    ${sh.phone ? `<div class="c">Simu: ${esc(sh.phone)}</div>` : ""}${sh.address ? `<div class="c">${esc(sh.address)}</div>` : ""}
+    <div class="dl"></div>
+    ${r.dateLine ? `<div>${esc(r.dateLine)}</div>` : ""}
+    ${r.customer ? `<div>Mteja: ${esc(r.customer)}</div>` : ""}${r.phone ? `<div>Simu: ${esc(r.phone)}</div>` : ""}
+    <div class="dl"></div>
+    <table class="ri"><thead><tr><th>Bidhaa</th><th class="q">Pcs</th><th class="n">Bei</th><th class="n">Jumla</th></tr></thead><tbody>
+    ${r.items.map((i) => `<tr><td>${esc(i.name)}${i.sub ? `<div class="sub">${esc(i.sub)}</div>` : ""}</td><td class="q">${i.qty}</td><td class="n">${rcNum(i.price)}</td><td class="n">${rcNum(i.total)}</td></tr>`).join("")}
+    </tbody></table>
+    <div class="dl"></div>
+    <div class="rr big"><span>JUMLA</span><span>TSh ${rcNum(r.total)}</span></div>
+    ${(r.rows || []).map(([a, b]) => `<div class="rr"><span>${esc(a)}</span><span>${esc(b)}</span></div>`).join("")}
+    ${r.credit ? `<div class="c" style="margin-top:4px">*** MKOPO — imeandikwa kwenye deni ***</div>` : ""}
+    ${r.note ? `<div class="c" style="margin-top:4px;font-style:italic">${esc(r.note)}</div>` : ""}
+    <div class="dl"></div><div class="c">${RC_THANKS}</div>
+  </div>`;
+}
+
 function renderReceiptModal() {
   const entry = STATE.entries.find((e) => e.id === UI.receiptEntryId);
   if (!entry) return "";
@@ -5011,23 +5040,19 @@ function renderReceiptModal() {
   return `
   <div class="modal-overlay">
     <div class="modal-stack">
-      <div class="receipt-print">
-        <h2 class="receipt-title" style="display:flex;align-items:center;gap:8px;justify-content:center">${companyLogo(30)} Receipt</h2>
-        <div class="receipt-meta">
-          <div><strong>${esc(entry.name)}</strong>${entry.phone ? " · " + esc(entry.phone) : ""}</div>
-          <div>Date: ${charge.date}</div>
-          ${entry.dueDate ? `<div>Due Date: ${entry.dueDate}</div>` : ""}
-        </div>
-        <table class="receipt-table">
-          <thead><tr><th>Item</th><th>Price</th><th>Discount</th><th>Qty</th><th>Total</th></tr></thead>
-          <tbody>
-            ${charge.items.map((it) => `<tr><td>${esc(it.name)}</td><td>${fmt(it.price)}</td><td>${it.discountPercent ? it.discountPercent + "%" : fmt(it.discountPrice)}</td><td>${it.qty}</td><td>${fmt(it.lineTotal)}</td></tr>`).join("")}
-          </tbody>
-        </table>
-        <div class="receipt-total-row"><span>Grand Total</span><span>${fmt(charge.amount)}</span></div>
-        ${charge.description ? `<p style="margin-top:10px;font-style:italic;color:#6b7280;font-size:12px">${esc(charge.description)}</p>` : ""}
-        <p style="text-align:center;margin-top:12px;font-size:12px;color:#4b5563;line-height:1.5">Asante kwa kutuamini! 🙏<br>Bidhaa bora kwa bei nzuri.<br>Karibu tena — tunakuthamini sana.</p>
-      </div>
+      ${posStyleReceipt({
+        dateLine: "Tarehe: " + rcDate(charge.date),
+        customer: entry.name, phone: entry.phone,
+        items: charge.items.map((it) => {
+          const qty = Number(it.qty) || 0, total = Number(it.lineTotal) || 0;
+          const off = it.discountPercent ? it.discountPercent + "%" : (Number(it.discountPrice) ? "TSh " + rcNum(it.discountPrice) : "");
+          return { name: it.name, qty, price: qty ? total / qty : it.price, total, sub: off ? "Punguzo " + off : "" };
+        }),
+        total: charge.amount,
+        rows: entry.dueDate ? [["Tarehe ya kulipa", rcDate(entry.dueDate)]] : [],
+        credit: entry.kind === "owed_to_me",
+        note: charge.description || "",
+      })}
       <div class="modal-actions no-print">
         <button class="btn btn-ghost" onclick="UI.receiptEntryId=null;rerender();">Close</button>
         <button class="btn btn-primary" onclick="window.print()">🖨️ Print</button>
