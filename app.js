@@ -333,6 +333,7 @@ function startSplitListener() {
     // Sales made in the separate POS app (one document each) — they reduce stock here too.
     STATE.posSales = Object.keys(docs).filter((id) => id.startsWith("possale_")).map((id) => docs[id]);
     STATE.posExpenses = Object.keys(docs).filter((id) => id.startsWith("posexp_")).map((id) => docs[id]);
+    STATE.images = {}; Object.keys(docs).forEach((id) => { const d = docs[id]; if (id.startsWith("pimg_") && d && d.data) STATE.images[d.key || String(d.name || "").trim().toLowerCase()] = d.data; });
     UI.sync = { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites, at: new Date() };
     applyCloudData(result);
     afterCloudUpdate();
@@ -771,6 +772,8 @@ function renderShell() {
       </section>
     </main>
     ${UI.receiptEntryId ? renderReceiptModal() : ""}
+    ${UI.photoTaker ? renderPhotoTaker() : ""}
+    ${UI.toastMsg ? `<div class="mini-toast" onclick="UI.toastMsg='';rerender()">${esc(UI.toastMsg)}</div>` : ""}
     ${UI.deliveryNoteId ? renderDeliveryNoteModal() : ""}
     ${UI.customerReceipt ? renderCustomerReceiptModal() : ""}
     ${UI.grnId ? renderGrnModal() : ""}
@@ -2604,6 +2607,80 @@ const BULK_PRODUCTS = [
   {"name": "WIRERING SINORAI", "price": 20000, "buyPrice": 18000}
 ];
 
+/* ---------- Picha za bidhaa (📷 piga kwa simu) ----------
+   Picha inapigwa kwa kamera ya simu/tablet, inapunguzwa ukubwa (≈15KB) na kuhifadhiwa cloud
+   (hati "pimg_<namba>"), kisha inaonekana kwenye Products, Dukani, Godown na Sales. */
+const IMG_PRE = "pimg_";
+const imgKey = (name) => String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
+function imgDocId(name) { let h = 2166136261; for (const ch of imgKey(name)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; } return IMG_PRE + h.toString(16); }
+function photoOf(name) { return (STATE.images && STATE.images[imgKey(name)]) || ""; }
+function photoBox(name, cls = "ph-box") {
+  const p = photoOf(name);
+  return p ? `<button type="button" class="${cls}" title="Badilisha au ondoa picha" onclick="event.stopPropagation();openPhotoTaker('${esc(name).replace(/'/g, "&#39;")}')"><img src="${p}" alt="" loading="lazy"></button>`
+    : `<button type="button" class="${cls} ph-empty" title="Piga picha ya bidhaa hii" onclick="event.stopPropagation();openPhotoTaker('${esc(name).replace(/'/g, "&#39;")}')">📷<span>Weka picha</span></button>`;
+}
+function openPhotoTaker(name) { UI.photoTaker = { name: name || "", data: "", busy: false, msg: "" }; rerender(); setTimeout(() => { const el = document.getElementById("pt-name"); if (el && !name) el.focus(); }, 50); }
+function closePhotoTaker() { UI.photoTaker = null; rerender(); }
+function takePhotoNow() {
+  const nameEl = document.getElementById("pt-name");
+  if (nameEl) UI.photoTaker.name = nameEl.value.trim();
+  if (!UI.photoTaker.name) { UI.photoTaker.msg = "Andika jina la bidhaa kwanza."; return rerender(); }
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "image/*"; inp.setAttribute("capture", "environment");
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (f) shrinkPhoto(f).then((d) => { UI.photoTaker.data = d; UI.photoTaker.msg = ""; rerender(); }).catch((e) => { UI.photoTaker.msg = e.message; rerender(); }); };
+  inp.click();
+}
+function shrinkPhoto(file, W = 300, H = 225) {
+  return new Promise((ok, bad) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas"); c.width = W; c.height = H;
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, W, H);
+      const s = Math.max(W / img.width, H / img.height), w = img.width * s, h = img.height * s;
+      x.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      let q = 0.72, d = c.toDataURL("image/jpeg", q);
+      while (d.length > 40000 && q > 0.35) { q -= 0.1; d = c.toDataURL("image/jpeg", q); }
+      ok(d);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); bad(new Error("Picha haisomeki, jaribu tena.")); };
+    img.src = url;
+  });
+}
+function savePhotoTaker() {
+  const t = UI.photoTaker; if (!t || !t.data) return;
+  const nameEl = document.getElementById("pt-name"); if (nameEl) t.name = nameEl.value.trim();
+  if (!t.name) { t.msg = "Andika jina la bidhaa."; return rerender(); }
+  t.busy = true; rerender();
+  STATE.images = STATE.images || {}; STATE.images[imgKey(t.name)] = t.data;   // show at once
+  colRef.doc(imgDocId(t.name)).set({ name: t.name, key: imgKey(t.name), data: t.data, at: Date.now() })
+    .then(() => { UI.photoTaker = null; UI.toastMsg = "✅ Picha imehifadhiwa"; rerender(); setTimeout(() => { UI.toastMsg = ""; rerender(); }, 2500); })
+    .catch((e) => { t.busy = false; t.msg = "Haijahifadhiwa: " + e.message; rerender(); });
+}
+function removePhoto(name) {
+  if (!confirm("Ondoa picha ya " + name + "?")) return;
+  if (STATE.images) delete STATE.images[imgKey(name)];
+  colRef.doc(imgDocId(name)).delete().catch(() => {});
+  UI.photoTaker = null; rerender();
+}
+function renderPhotoTaker() {
+  const t = UI.photoTaker; if (!t) return "";
+  const existing = t.name ? photoOf(t.name) : "";
+  return `<div class="modal-overlay"><div class="modal-stack" style="max-width:380px"><div class="panel" style="margin:0">
+    <h3 style="margin-top:0">📷 Picha ya bidhaa</h3>
+    <label class="due-label">Bidhaa unayopiga picha</label>
+    <input id="pt-name" list="product-datalist" class="field" placeholder="Andika jina la bidhaa…" value="${esc(t.name)}">
+    <div class="pt-prev">${t.data ? `<img src="${t.data}" alt="">` : existing ? `<img src="${existing}" alt=""><span class="pt-tag">Picha iliyopo</span>` : `<span>Bado hakuna picha</span>`}</div>
+    ${t.msg ? `<p class="settings-msg err">${esc(t.msg)}</p>` : ""}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <button class="btn btn-primary" onclick="takePhotoNow()">📷 ${t.data || existing ? "Piga tena" : "Piga picha"}</button>
+      ${t.data ? `<button class="btn btn-primary" style="background:#14a37f" ${t.busy ? "disabled" : ""} onclick="savePhotoTaker()">💾 ${t.busy ? "Inahifadhi…" : "Hifadhi"}</button>` : ""}
+      ${existing && !t.data ? `<button class="btn btn-ghost" onclick="removePhoto('${esc(t.name).replace(/'/g, "&#39;")}')">🗑️ Ondoa</button>` : ""}
+      <button class="btn btn-ghost" onclick="closePhotoTaker()">Funga</button>
+    </div>
+  </div></div></div>`;
+}
+
 function renderProductsPage() {
   const active = STATE.products.filter((p) => !p.deleted);
   const trashed = STATE.products.filter((p) => p.deleted).sort((a, b) => a.name.localeCompare(b.name));
@@ -2612,7 +2689,8 @@ function renderProductsPage() {
   <div class="panel">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
       <h3 style="margin:0">Your Products (${active.length})</h3>
-      <button class="btn btn-sm btn-primary" onclick="importBulkProducts()">⬇️ Import Full Parts List (${BULK_PRODUCTS.length})</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm btn-primary photo-fab" style="background:#14a37f" onclick="openPhotoTaker('')">📷 Piga picha ya bidhaa</button>
+      <button class="btn btn-sm btn-primary" onclick="importBulkProducts()">⬇️ Import Full Parts List (${BULK_PRODUCTS.length})</button></div>
     </div>
     <input id="product-search-input" type="search" autocomplete="off" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search product..." value="${esc(UI.productSearch || "")}" oninput="UI.productSearch=this.value;softRerender();">
     ${renderProductsByLetter(active)}
@@ -2725,24 +2803,30 @@ function renderProductsByLetter(active) {
         <span>${isOpen ? "\u25b2" : "\u25bc"}</span>
       </button>
       ${isOpen ? `
-      <div class="user-list" style="padding:8px">
+      <div class="tile-grid" style="padding:8px">
         ${list.map((p) => `
-          <div class="user-row" style="flex-wrap:wrap;gap:6px">
+          <div class="tile-card">
+            ${photoBox(p.name)}
+            <div class="tc-body">
             ${UI.editingProductId === p.id ? `
-              <span class="user-name" style="flex:1 1 100%">${esc(p.name)}</span>
+              <div class="tc-name">${esc(p.name)}</div>
               <label style="font-size:11px;color:#6b7280">Sell</label>
-              <input id="edit-price-${p.id}" class="field field-sm" style="width:110px" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
+              <input id="edit-price-${p.id}" class="field field-sm" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
               <label style="font-size:11px;color:#6b7280">Buy</label>
-              <input id="edit-buy-${p.id}" class="field field-sm" style="width:110px" type="text" inputmode="decimal" value="${p.buyPrice != null ? p.buyPrice : ""}" placeholder="—" oninput="this.value=sanitizeNum(this.value)">
-              <button class="btn btn-sm btn-primary" onclick="saveProductPrice('${p.id}')">Save</button>
-              <button class="btn btn-sm btn-ghost" onclick="UI.editingProductId=null;rerender();">Cancel</button>
+              <input id="edit-buy-${p.id}" class="field field-sm" type="text" inputmode="decimal" value="${p.buyPrice != null ? p.buyPrice : ""}" placeholder="—" oninput="this.value=sanitizeNum(this.value)">
+              <div style="display:flex;gap:6px;margin-top:6px"><button class="btn btn-sm btn-primary" onclick="saveProductPrice('${p.id}')">Save</button>
+              <button class="btn btn-sm btn-ghost" onclick="UI.editingProductId=null;rerender();">Cancel</button></div>
             ` : `
-              <div class="user-row-main"><span class="user-name">${esc(p.name)}</span><span class="user-detail">Sell ${fmt(p.price)} · Buy ${p.buyPrice != null ? fmt(p.buyPrice) : "—"}${p.buyPrice != null && Number(p.price) > 0 ? ` · <strong style="color:${p.price - p.buyPrice >= 0 ? "var(--green)" : "#dc2636"}">${p.price - p.buyPrice >= 0 ? "Profit" : "Loss"} ${fmt(Math.abs(p.price - p.buyPrice))}</strong>` : ""}</span></div>
-              <div style="display:flex;gap:6px">
-                <button class="icon-btn" style="color:#1677ff" onclick="UI.editingProductId='${p.id}';rerender();">\u270f\ufe0f</button>
-                <button class="icon-btn" onclick="trashProduct('${p.id}')">\ud83d\uddd1\ufe0f</button>
+              <div class="tc-name">${esc(p.name)}</div>
+              <div class="tc-price">${fmt(p.price)}</div>
+              <div class="tc-sub">Buy ${p.buyPrice != null ? fmt(p.buyPrice) : "—"}${p.buyPrice != null && Number(p.price) > 0 ? ` · <strong style="color:${p.price - p.buyPrice >= 0 ? "var(--green)" : "#dc2636"}">${p.price - p.buyPrice >= 0 ? "Profit" : "Loss"} ${fmt(Math.abs(p.price - p.buyPrice))}</strong>` : ""}</div>
+              <div class="tc-actions">
+                <button class="icon-btn" title="Picha" onclick="openPhotoTaker('${esc(p.name).replace(/'/g, "&#39;")}')">📷</button>
+                <button class="icon-btn" style="color:#1677ff" onclick="UI.editingProductId='${p.id}';rerender();">✏️</button>
+                <button class="icon-btn" onclick="trashProduct('${p.id}')">🗑️</button>
               </div>
             `}
+            </div>
           </div>`).join("")}
       </div>` : ""}
     </div>`;
@@ -3043,7 +3127,7 @@ function salePickTiles(f) {
     const n = inSale[i.name.toLowerCase()] || 0;
     return `<button type="button" class="pick-tile${i.qty <= 0 ? " out" : ""}${n ? " on" : ""}" onclick="pickSaleItem('${i.id}')" ${i.qty <= 0 ? "disabled" : ""}>
       ${n ? `<span class="pk-n">🛒 ${n}</span>` : ""}
-      <span class="pk-name">${esc(i.name)}</span><span class="pk-cat">${esc(i.cat)}</span>
+      ${photoOf(i.name) ? `<span class="pk-ph"><img src="${photoOf(i.name)}" alt="" loading="lazy"></span>` : ""}<span class="pk-name">${esc(i.name)}</span><span class="pk-cat">${esc(i.cat)}</span>
       <span class="pk-price">${i.price ? fmt(i.price) : "No price"}</span>
       <span class="pk-qty${i.qty > 0 && i.qty <= i.low ? " low" : ""}">${i.qty <= 0 ? "Out of stock" : (i.qty <= i.low ? "⚠️ " : "") + i.qty + " in stock"}</span></button>`;
   }).join("") + (list.length > shown.length ? `<div class="pick-more">Showing ${shown.length} of ${list.length} — type to search</div>` : "")
@@ -4365,7 +4449,8 @@ function renderMainStorePage(store) {
   </div>` : ""}
 
   <div class="panel" style="margin-top:16px">
-    <h3 style="margin:0 0 10px">Current Stock — ${label}</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px"><h3 style="margin:0">Current Stock — ${label}</h3>
+      <button class="btn btn-sm btn-primary photo-fab" style="background:#14a37f" onclick="openPhotoTaker('')">📷 Piga picha ya bidhaa</button></div>
     <input id="stock-search-input-${store}" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Search item..." value="${esc(UI.stockSearch || "")}" oninput="UI.stockSearch=this.value;softRerender();">
     ${items.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : renderStockByCategory(store)}
   </div>
@@ -4432,13 +4517,13 @@ function renderStockByCategory(store) {
         <span>${isOpen ? "▲" : "▼"}</span>
       </button>
       ${isOpen ? `
-      <table class="recent-table" style="width:100%">
-        <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Category</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Buying Price</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">In Stock</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Low-Stock Limit</th><th></th></tr></thead>
-        <tbody>
+      <div class="tile-grid" style="padding:8px">
           ${list.map((it) => `
-            <tr>
-              <td style="padding:8px 6px">${esc(it.name)}</td>
-              <td style="padding:8px 6px">
+            <div class="tile-card">
+              ${photoBox(it.name)}
+              <div class="tc-body">
+              <div class="tc-name">${esc(it.name)}</div>
+              <div class="tc-row">
                 ${UI.editingCategoryId === it.id ? `
                   <select id="cat-${it.id}" class="field field-sm" style="width:auto;display:inline-block">
                     ${STOCK_CATEGORIES.map((c) => `<option value="${c}" ${it.category === c ? "selected" : ""}>${c}</option>`).join("")}
@@ -4447,21 +4532,21 @@ function renderStockByCategory(store) {
                 ` : `
                   <span class="badge pending">${esc(it.category)}</span> <button class="icon-btn" style="color:#1677ff" onclick="UI.editingCategoryId='${it.id}';rerender();">✏️</button>
                 `}
-              </td>
-              <td style="padding:8px 6px;text-align:right;color:#6b7280">${buyPriceOf(it) != null ? fmt(buyPriceOf(it)) : "—"}</td>
-              <td style="padding:8px 6px;text-align:right;font-weight:700;${isZeroStock(it) ? "color:#dc2636" : isLowStock(it) ? "color:#b8862f" : ""}">${qtyOf(it.id)}</td>
-              <td style="padding:8px 6px;text-align:right">
+              </div>
+              <div class="tc-qty" style="${isZeroStock(it) ? "color:#dc2636" : isLowStock(it) ? "color:#b8862f" : ""}">${qtyOf(it.id)} <small>in stock</small>
+                ${isZeroStock(it) ? `<span class="badge" style="background:#ffe0e3;color:#dc2636">Zero</span>` : isLowStock(it) ? `<span class="badge pending">Low</span>` : `<span class="badge paid">OK</span>`}</div>
+              <div class="tc-sub">Buying: ${buyPriceOf(it) != null ? fmt(buyPriceOf(it)) : "—"}</div>
+              <div class="tc-sub">Low limit:
                 ${UI.editingLimitId === it.id ? `
-                  <input id="limit-${it.id}" class="field field-sm" style="width:70px;display:inline-block" type="text" inputmode="numeric" value="${esc(it.lowStockLimit ?? "")}" oninput="this.value=sanitizeNum(this.value)">
+                  <input id="limit-${it.id}" class="field field-sm" style="width:64px;display:inline-block" type="text" inputmode="numeric" value="${esc(it.lowStockLimit ?? "")}" oninput="this.value=sanitizeNum(this.value)">
                   <button class="btn btn-sm btn-primary" onclick="saveLimit('${it.id}')">Save</button>
                 ` : `
                   ${it.lowStockLimit ?? "—"} <button class="icon-btn" onclick="UI.editingLimitId='${it.id}';rerender();">✏️</button>
                 `}
-              </td>
-              <td style="padding:8px 6px">${isZeroStock(it) ? `<span class="badge" style="background:#ffe0e3;color:#dc2636">Zero</span>` : isLowStock(it) ? `<span class="badge pending">Low Stock</span>` : `<span class="badge paid">OK</span>`}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table>` : ""}
+              </div>
+              </div>
+            </div>`).join("")}
+      </div>` : ""}
     </div>`;
   }).join("");
 }

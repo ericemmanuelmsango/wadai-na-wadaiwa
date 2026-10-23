@@ -187,6 +187,29 @@ input{font-family:inherit;}
 .mode-toggle{display:flex;gap:6px;margin-bottom:4px;}
 .mode-btn{flex:1;padding:7px;border-radius:7px;border:1px solid var(--line);background:var(--paper-alt);color:#6b7280;font-size:12.5px;font-weight:600;}
 .mode-btn.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+/* vibox (tiles) vya bidhaa + picha */
+.tile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;align-content:start;grid-auto-rows:max-content}
+@media(max-width:520px){.tile-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}}
+.tile-card{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;background:var(--paper,#fff);overflow:hidden;min-width:0}
+.tc-body{padding:9px 10px 10px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.tc-name{font-weight:700;font-size:12.5px;line-height:1.25;word-break:break-word}
+.tc-price{font-weight:800;color:#14a37f;font-size:14px}
+.tc-qty{font-weight:800;font-size:15px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}.tc-qty small{font-weight:600;font-size:11px;color:#8290a4}
+.tc-sub{font-size:11.5px;color:#6b7280}.tc-row{font-size:12px}
+.tc-actions{display:flex;gap:4px;margin-top:2px}
+.ph-box{display:block;width:100%;aspect-ratio:16/10;background:#eef2f7;overflow:hidden;border:0;padding:0}
+.ph-box img{width:100%;height:100%;object-fit:cover;display:block}
+button.ph-box{cursor:pointer}
+.ph-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:22px;color:#94a3b8;cursor:pointer;font-family:inherit}
+.ph-empty span{font-size:11px;font-weight:600}
+.ph-empty:hover{background:#e2e8f0;color:#475569}
+.pick-tile .pk-ph{width:100%;aspect-ratio:4/3;border-radius:8px;overflow:hidden;margin-bottom:4px;background:#eef2f7}
+.pick-tile .pk-ph img{width:100%;height:100%;object-fit:cover;display:block}
+.pt-prev{margin-top:10px;aspect-ratio:4/3;border-radius:10px;background:#eef2f7;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative;color:#94a3b8;font-size:13px}
+.pt-prev img{width:100%;height:100%;object-fit:cover}
+.pt-tag{position:absolute;left:8px;top:8px;background:rgba(15,23,42,.7);color:#fff;font-size:11px;padding:2px 8px;border-radius:20px}
+.photo-fab{display:inline-flex;align-items:center;gap:6px}
+.mini-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#0e2a3f;color:#fff;padding:10px 18px;border-radius:24px;font-weight:700;z-index:9999;box-shadow:0 6px 20px rgba(0,0,0,.2)}
 /* Record a Sale: bidhaa kama vibox (tiles) */
 .pick-box{margin-top:10px;display:flex;flex-direction:column;gap:8px}
 .pick-chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;min-width:0}
@@ -294,7 +317,7 @@ html[data-theme="dark"] .receipt-print .field,html[data-theme="dark"] .receipt-p
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="app.js?v=53"></script>
+<script src="app.js?v=54"></script>
 <script>
 /* PRINT FIX: copy the open receipt to #print-root just before printing, so only it prints, once */
 (function () {
