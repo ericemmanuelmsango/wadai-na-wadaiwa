@@ -333,6 +333,7 @@ function startSplitListener() {
     // Sales made in the separate POS app (one document each) — they reduce stock here too.
     STATE.posSales = Object.keys(docs).filter((id) => id.startsWith("possale_")).map((id) => docs[id]);
     STATE.posExpenses = Object.keys(docs).filter((id) => id.startsWith("posexp_")).map((id) => docs[id]);
+    STATE.posWholePrices = (docs.pos_settings && docs.pos_settings.wholePrices) || {};
     STATE.images = {}; Object.keys(docs).forEach((id) => { const d = docs[id]; if (id.startsWith("pimg_") && d && d.data) STATE.images[d.key || String(d.name || "").trim().toLowerCase()] = d.data; });
     UI.sync = { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites, at: new Date() };
     applyCloudData(result);
@@ -2758,9 +2759,43 @@ function addProduct() {
   UI.userMsg = { ok: true, text: qty > 0 ? `${name} added — ${qty} imeingia ${store === "godown" ? "Godown" : "Dukani"}.` : `${name} added.`, forProduct: true };
   rerender();
 }
+// Rename a product everywhere it is linked by name: stock items (Dukani + Godown), its photo,
+// and the POS wholesale price. Past sales keep the name they were recorded with.
+function renameProduct(prod, newName) {
+  const oldName = prod.name, oldL = oldName.trim().toLowerCase(), newL = newName.trim().toLowerCase();
+  if (!newName || oldL === newL && oldName === newName) return true;
+  if (oldL !== newL && STATE.products.some((x) => !x.deleted && x.id !== prod.id && x.name.trim().toLowerCase() === newL)) {
+    alert("Kuna bidhaa nyingine yenye jina \"" + newName + "\" tayari."); return false;
+  }
+  STATE.products = STATE.products.map((x) => (x.id === prod.id ? { ...x, name: newName } : x));
+  let stockChanged = false;
+  STATE.stockItems = STATE.stockItems.map((it) => (it.name.trim().toLowerCase() === oldL ? (stockChanged = true, { ...it, name: newName }) : it));
+  if (stockChanged) saveStockItems();
+  // photo follows the new name
+  const pic = photoOf(oldName);
+  if (pic && oldL !== newL) {
+    STATE.images[imgKey(newName)] = pic; delete STATE.images[imgKey(oldName)];
+    colRef.doc(imgDocId(newName)).set({ name: newName, key: imgKey(newName), data: pic, at: Date.now() }).then(() => colRef.doc(imgDocId(oldName)).delete()).catch(() => {});
+  }
+  // POS wholesale price is stored by a normalised name
+  const norm = (n) => (n || "").toLowerCase().replace(/[.,'"`]/g, "").replace(/\s+/g, " ").trim();
+  const wp = STATE.posWholePrices || {};
+  if (wp[norm(oldName)] != null && norm(oldName) !== norm(newName)) {
+    const FV = firebase.firestore.FieldValue;
+    colRef.doc("pos_settings").set({ wholePrices: { [norm(newName)]: wp[norm(oldName)], [norm(oldName)]: FV.delete() } }, { merge: true }).catch(() => {});
+  }
+  return true;
+}
 function saveProductPrice(id) {
   const val = Number(document.getElementById("edit-price-" + id).value) || 0;
   const buyRaw = document.getElementById("edit-buy-" + id).value;
+  const nameEl = document.getElementById("edit-name-" + id);
+  const prod0 = STATE.products.find((p) => p.id === id);
+  if (prod0 && nameEl) {
+    const nn = nameEl.value.trim().replace(/\s+/g, " ");
+    if (!nn) { alert("Jina la bidhaa haliwezi kuwa tupu."); return; }
+    if (!renameProduct(prod0, nn)) return;
+  }
   const prod = STATE.products.find((p) => p.id === id);
   STATE.products = STATE.products.map((p) => (p.id === id ? { ...p, price: val } : p));
   if (prod && buyRaw !== "") { setBuyPriceEverywhere(prod.name, Number(buyRaw)); saveStockItems(); }
@@ -2809,7 +2844,8 @@ function renderProductsByLetter(active) {
             ${photoBox(p.name)}
             <div class="tc-body">
             ${UI.editingProductId === p.id ? `
-              <div class="tc-name">${esc(p.name)}</div>
+              <label style="font-size:11px;color:#6b7280">Name</label>
+              <input id="edit-name-${p.id}" class="field field-sm" type="text" value="${esc(p.name)}">
               <label style="font-size:11px;color:#6b7280">Sell</label>
               <input id="edit-price-${p.id}" class="field field-sm" type="text" inputmode="decimal" value="${p.price}" oninput="this.value=sanitizeNum(this.value)">
               <label style="font-size:11px;color:#6b7280">Buy</label>
