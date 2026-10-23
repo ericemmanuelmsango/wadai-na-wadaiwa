@@ -3022,6 +3022,51 @@ function setSalesStore(store) {
   rerender();
 }
 
+/* ---------- Chagua bidhaa kwa vibox (tiles) — Record a Sale ----------
+   Bidhaa za stock ya Dukani/Godown zinaonekana kama vibox: jina, kundi, bei, idadi iliyopo.
+   Ukibonyeza kibox: inaongezwa kwenye mauzo (ukibonyeza tena, idadi inaongezeka). */
+function salePickItems(f) {
+  const p = UI.salePick || (UI.salePick = { q: "", cat: "All" });
+  const words = p.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const all = STATE.stockItems.filter((it) => (it.store || "dukani") === f.store);
+  const list = all.filter((it) => (p.cat === "All" || (it.category || "Other") === p.cat) && words.every((w) => it.name.toLowerCase().includes(w)))
+    .map((it) => { const pr = productByName(it.name); return { id: it.id, name: it.name, cat: it.category || "Other", qty: qtyOf(it.id), low: Number(it.lowStockLimit) || 0, price: pr && Number(pr.price) > 0 ? Number(pr.price) : 0 }; })
+    .sort((a, b) => (b.qty > 0) - (a.qty > 0) || a.name.localeCompare(b.name));
+  return { all, list };
+}
+function salePickTiles(f) {
+  const { list } = salePickItems(f);
+  const inSale = {};
+  f.rows.forEach((r) => { const k = r.itemName.trim().toLowerCase(); if (k) inSale[k] = (inSale[k] || 0) + (Number(r.qty) || 0); });
+  const shown = list.slice(0, 80);
+  return shown.length ? shown.map((i) => {
+    const n = inSale[i.name.toLowerCase()] || 0;
+    return `<button type="button" class="pick-tile${i.qty <= 0 ? " out" : ""}${n ? " on" : ""}" onclick="pickSaleItem('${i.id}')" ${i.qty <= 0 ? "disabled" : ""}>
+      ${n ? `<span class="pk-n">🛒 ${n}</span>` : ""}
+      <span class="pk-name">${esc(i.name)}</span><span class="pk-cat">${esc(i.cat)}</span>
+      <span class="pk-price">${i.price ? fmt(i.price) : "No price"}</span>
+      <span class="pk-qty${i.qty > 0 && i.qty <= i.low ? " low" : ""}">${i.qty <= 0 ? "Out of stock" : (i.qty <= i.low ? "⚠️ " : "") + i.qty + " in stock"}</span></button>`;
+  }).join("") + (list.length > shown.length ? `<div class="pick-more">Showing ${shown.length} of ${list.length} — type to search</div>` : "")
+    : `<div class="pick-more">No item found</div>`;
+}
+function refreshSalePick() { const g = document.getElementById("sp-grid"); if (g && UI.saleForm) g.innerHTML = salePickTiles(UI.saleForm); }
+function setSalePickCat(c) { (UI.salePick || (UI.salePick = { q: "", cat: "All" })).cat = c; rerender(); }
+function pickSaleItem(id) {
+  const f = UI.saleForm; if (!f) return;
+  const it = STATE.stockItems.find((x) => x.id === id); if (!it) return;
+  const k = it.name.toLowerCase();
+  let row = f.rows.find((r) => r.itemName.trim().toLowerCase() === k);
+  if (row) row.qty = String((Number(row.qty) || 0) + 1);
+  else {
+    row = f.rows.find((r) => !r.itemName.trim());
+    if (!row) { row = { id: uid(), itemName: "", price: "", qty: "" }; f.rows.push(row); }
+    row.itemName = it.name; row.qty = "1";
+    const pr = productByName(it.name);
+    if (pr && Number(pr.price) > 0) row.price = String(pr.price);
+  }
+  rerender();
+}
+
 function renderSalesPage() {
   if (!UI.salesStore) UI.salesStore = "dukani";
   if (!UI.salesView) UI.salesView = "day";
@@ -3048,6 +3093,11 @@ function renderSalesPage() {
     <input id="sl-customer" class="field" placeholder="Customer name (optional)" value="${esc(f.customer)}" oninput="setSaleField('customer',this.value)">
     <label class="due-label">📅 Date of sale</label>
     <input id="sl-date" class="field" type="date" value="${esc(f.date)}" oninput="setSaleField('date',this.value)">
+    <div class="pick-box">
+      <input id="sp-q" class="field" type="search" autocomplete="off" placeholder="🔍 Search item… (tap a box to add it)" value="${esc((UI.salePick || {}).q || "")}" oninput="(UI.salePick || (UI.salePick = { q: '', cat: 'All' })).q = this.value; refreshSalePick()">
+      <div class="pick-chips">${["All", ...[...new Set(salePickItems(f).all.map((it) => it.category || "Other"))].sort()].map((c) => `<button type="button" class="chip-btn ${((UI.salePick || {}).cat || "All") === c ? "active" : ""}" onclick="setSalePickCat('${esc(c)}')">${esc(c)}</button>`).join("")}</div>
+      <div class="pick-grid" id="sp-grid">${salePickTiles(f)}</div>
+    </div>
     <div class="items-block" style="margin-top:10px">
       <div class="item-row item-row-head" style="grid-template-columns:1.4fr .9fr .6fr .9fr auto">
         <span>Item</span><span>Price</span><span>Qty</span><span>Total</span><span></span>
