@@ -3053,33 +3053,6 @@ function renderDashboard() {
     </div>
   </section>
 
-  <section class="db-kpis">
-    ${kpi("blue", "cart", "Mauzo ya leo", fin ? big(today.total) : hidden, fin ? deltaW(today.total, yest.total) : lock)}
-    ${kpi("green", "trend", "Faida ghafi ya leo", fin ? big(today.profit) : hidden, fin ? "Mwezi huu: " + big(month.profit) : lock)}
-    ${kpi("orange", "cal", "Mauzo ya mwezi huu", fin ? big(month.total) : hidden, fin ? margin + "% faida · " + month.n + " mistari" : lock)}
-    ${kpi("purple", "box", "Thamani ya stock", big(capD + capG), "Dukani " + dbShort(capD) + " · Godown " + dbShort(capG))}
-  </section>
-
-  <section class="db-row">
-    <div class="db-card db-span8">
-      <div class="db-h"><h3>Mauzo ya siku 14</h3><div class="db-legend"><span><i class="lg1"></i>Mauzo</span>${fin ? `<span><i class="lg2"></i>Faida ghafi</span>` : ""}</div></div>
-      ${fin ? dbChart(days) : `<div class="db-ok neutral db-center"><span>Mauzo na faida yamefichwa</span>${lock}</div>`}
-    </div>
-    <div class="db-card db-span4">
-      <div class="db-h"><h3>Madeni</h3><button class="db-link" onclick="setPage('owed')">Fungua →</button></div>
-      <div class="db-pair">
-        <div><span>Kukusanya</span><b class="pos">${fmt(totalReceivable)}</b><small>wadaiwa ${owed.length}</small></div>
-        <div><span>Kulipa</span><b class="neg">${fmt(totalPayable)}</b><small>wadai ${owe.length}</small></div>
-      </div>
-      <div class="db-split" role="img" aria-label="Kukusanya dhidi ya kulipa"><i class="pos" style="flex:${totalReceivable || (totalPayable ? 0 : 1)}"></i><i class="neg" style="flex:${totalPayable || (totalReceivable ? 0 : 1)}"></i></div>
-      <div class="db-net"><span>Hali halisi</span><b class="${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : ""}${fmt(net)}</b></div>
-      <div class="db-mini">
-        <div class="${overdue.length ? "bad" : ""}"><b>${overdue.length}</b><span>yamepita tarehe</span></div>
-        <div class="${dueToday.length ? "warn" : ""}"><b>${dueToday.length}</b><span>yanafika leo</span></div>
-      </div>
-    </div>
-  </section>
-
   <section class="db-row">
     <div class="db-card db-span4">
       <div class="db-h"><h3>Zinazouzika zaidi · mwezi huu</h3></div>
