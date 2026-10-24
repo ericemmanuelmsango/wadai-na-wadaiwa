@@ -702,7 +702,7 @@ function renderShell() {
   const dueCount = active.filter((e) => dueStatus(e)).length + lowStockCount("dukani") + lowStockCount("godown") + zeroStockCount("dukani") + zeroStockCount("godown");
 
   const titles = {
-    dashboard: ["Dashboard", "Overview of all your debts"],
+    dashboard: ["Dashboard", "Mauzo, faida, madeni na stock — kwa pamoja"],
     owed: ["Debtors", "People who owe you money"],
     owe: ["Creditors", "People you owe money"],
     reports: ["Reports", "Business performance over time"],
@@ -762,10 +762,10 @@ function renderShell() {
       </header>
 
       <section class="content">
-        <div class="page-header">
+        ${UI.page === "dashboard" ? "" : `<div class="page-header">
           <div><h1>${title}</h1><p>${sub}</p></div>
           <div class="date">📅 Today: ${todayStr()}</div>
-        </div>
+        </div>`}
 
         ${UI.err ? `<div class="err-banner">${esc(UI.err)}<button onclick="UI.err=null;rerender();">✕</button></div>` : ""}
 
@@ -2952,48 +2952,137 @@ function deleteMainExpense(id) {
 }
 
 /* ---------- DASHBOARD ---------- */
+/* ---------- DASHBOARD (kituo cha biashara) ---------- */
+function dbDay(d, n) { const x = new Date(d + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); }
+function dbShort(n) { n = Number(n) || 0; const a = Math.abs(n); return a >= 1e6 ? (n / 1e6).toFixed(a >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M" : a >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n)); }
+function dbDelta(cur, prev) {
+  if (!prev && !cur) return `<span class="db-delta eq">—</span>`;
+  if (!prev) return `<span class="db-delta up">▲ mpya</span>`;
+  const p = Math.round(((cur - prev) / prev) * 100);
+  return p === 0 ? `<span class="db-delta eq">0%</span>` : `<span class="db-delta ${p > 0 ? "up" : "dn"}">${p > 0 ? "▲" : "▼"} ${Math.abs(p)}%</span>`;
+}
+function dbSpark(vals) {
+  const w = 96, h = 32, max = Math.max(1, ...vals), pts = vals.map((v, i) => [(i / Math.max(1, vals.length - 1)) * (w - 4) + 2, h - 3 - (v / max) * (h - 8)]);
+  const d = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const last = pts[pts.length - 1];
+  return `<svg class="db-spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${d} L${w - 2} ${h} L2 ${h}Z" fill="currentColor" opacity=".1"/><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="${last[0]}" cy="${last[1]}" r="2.6" fill="currentColor"/></svg>`;
+}
+function dbNice(v) { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p; }
+function dbChart(days) {
+  const narrow = window.innerWidth < 700, W = narrow ? 380 : 760, H = narrow ? 220 : 250, L = narrow ? 34 : 46, R = 8, T = 16, B = 30;
+  const max = dbNice(Math.max(...days.map((d) => d.total))), cw = (W - L - R) / days.length, y = (v) => T + (H - T - B) * (1 - v / max);
+  const DOW = ["J'pi", "J'tt", "J'nn", "J'tn", "Alh", "Iju", "J'mo"];
+  let g = "";
+  for (let i = 0; i <= 4; i++) { const v = (max * i) / 4, yy = y(v); g += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" class="db-grid"/><text x="${L - 7}" y="${yy + 4}" text-anchor="end" class="db-axis">${dbShort(v)}</text>`; }
+  const best = days.reduce((a, d, i) => (d.total > days[a].total ? i : a), 0);
+  days.forEach((d, i) => {
+    const bw = Math.min(34, cw * 0.62), x = L + i * cw + (cw - bw) / 2, yt = y(d.total), yp = y(Math.max(0, d.profit)), dt = new Date(d.date + "T12:00:00Z"), last = i === days.length - 1;
+    g += `<rect x="${x}" y="${yt}" width="${bw}" height="${Math.max(0, H - B - yt)}" rx="4" class="db-bar"><title>${d.date} — mauzo ${fmt(d.total)}${UI.financialsUnlocked ? " · faida " + fmt(d.profit) : ""}</title></rect>`;
+    if (UI.financialsUnlocked) g += `<rect x="${x + bw * 0.25}" y="${yp}" width="${bw * 0.5}" height="${Math.max(0, H - B - yp)}" rx="3" class="db-bar2"></rect>`;
+    if (d.total && i === best) g += `<text x="${x + bw / 2}" y="${yt - 6}" text-anchor="middle" class="db-axis db-strong">${dbShort(d.total)}</text>`;
+    if (!narrow || i % 2 === (days.length - 1) % 2) g += `<text x="${x + bw / 2}" y="${H - 9}" text-anchor="middle" class="db-axis${last ? " db-strong" : ""}">${last ? "Leo" : narrow ? dt.getUTCDate() : DOW[dt.getUTCDay()] + " " + dt.getUTCDate()}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mauzo kwa siku 14 zilizopita" class="db-chart">${g}</svg>`;
+}
 function renderDashboard() {
   const active = STATE.entries.filter((e) => !e.archived);
-  const owed = active.filter((e) => e.kind === "owed_to_me");
-  const owe = active.filter((e) => e.kind === "i_owe");
+  const owed = active.filter((e) => e.kind === "owed_to_me"), owe = active.filter((e) => e.kind === "i_owe");
   const totalReceivable = owed.reduce((s, e) => s + Math.max(balanceOf(e), 0), 0);
   const totalPayable = owe.reduce((s, e) => s + Math.max(balanceOf(e), 0), 0);
-  const overdueCount = active.filter((e) => dueStatus(e) === "overdue").length;
+  const overdue = active.filter((e) => dueStatus(e) === "overdue"), dueToday = active.filter((e) => dueStatus(e) === "today");
   const net = totalReceivable - totalPayable;
+  const fin = !!UI.financialsUnlocked;
 
-  const recentPayments = active
-    .flatMap((e) => e.payments.map((p) => ({ ...p, name: e.name, kind: e.kind })))
-    .sort((a, b) => (a.date < b.date ? 1 : -1))
-    .slice(0, 8);
+  // mauzo (Sales + POS) — kanuni zilezile za Reports
+  const t = todayStr(), yd = dbDay(t, -1), m0 = t.slice(0, 8) + "01", f14 = dbDay(t, -13);
+  const lines = reportLines().filter((x) => (x.date || "") >= (m0 < f14 ? m0 : f14));
+  const sum = (from, to) => { const L = lines.filter((x) => x.date >= from && x.date <= to); return { total: L.reduce((a, x) => a + (x.total || 0), 0), profit: L.reduce((a, x) => a + repProfit(x), 0), n: L.length }; };
+  const today = sum(t, t), yest = sum(yd, yd), month = sum(m0, t), exp = expensesIn(m0, t).reduce((a, x) => a + Number(x.amount || 0), 0);
+  const days = Array.from({ length: 14 }, (_, i) => dbDay(f14, i)).map((d) => ({ date: d, ...sum(d, d) }));
+  const top = {}; lines.filter((x) => x.date >= m0).forEach((x) => { const k = x.itemName || "—"; (top[k] = top[k] || { name: k, qty: 0, total: 0 }); top[k].qty += x.qty || 0; top[k].total += x.total || 0; });
+  const topItems = Object.values(top).sort((a, b) => b.total - a.total).slice(0, 5), topMax = Math.max(1, ...topItems.map((x) => x.total));
 
-  return `
-  <div class="cards">
-    ${statCard("Total Debtors", owed.length, "people who owe you", "blue")}
-    ${statCard("Total Creditors", owe.length, "people you owe", "purple")}
-    ${statCard("Amount to Collect", fmt(totalReceivable), "outstanding receivables", "green")}
-    ${statCard("Amount to Pay", fmt(totalPayable), "outstanding payables", "orange")}
-    ${statCard("Overdue", overdueCount, "past due date", "red")}
-    ${statCard("Net Position", (net >= 0 ? "+" : "") + fmt(net), "overall balance", "cyan")}
-  </div>
-  ${renderReminderBar(active)}
-  <div class="lower">
-    <div class="panel">
-      <h3>To Collect vs To Pay</h3>
-      <div class="chart-container"><canvas id="chart-collect-pay"></canvas></div>
+  // stock
+  const cap = (st) => storeItems(st).reduce((s, it) => { const q = qtyOf(it.id), a = buyPriceOf(it); return s + (q > 0 && a != null ? q * a : 0); }, 0);
+  const capD = cap("dukani"), capG = cap("godown");
+  const zero = STATE.stockItems.filter((it) => isZeroStock(it)), low = STATE.stockItems.filter((it) => isLowStock(it) && !isZeroStock(it));
+
+  const recentPayments = active.flatMap((e) => e.payments.map((p) => ({ ...p, name: e.name, kind: e.kind }))).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 6);
+
+  const hr = new Date().getHours(), greet = hr < 12 ? "Habari za asubuhi" : hr < 16 ? "Habari za mchana" : hr < 19 ? "Habari za jioni" : "Habari za usiku";
+  const MON = ["Januari", "Februari", "Machi", "Aprili", "Mei", "Juni", "Julai", "Agosti", "Septemba", "Oktoba", "Novemba", "Desemba"], DOWL = ["Jumapili", "Jumatatu", "Jumanne", "Jumatano", "Alhamisi", "Ijumaa", "Jumamosi"];
+  const dt = new Date(t + "T12:00:00Z");
+  const who = (STATE.settings && STATE.settings.ownerName) || "Eric";
+  const lock = `<button class="db-lock" onclick="setPage('reports')">🔒 Fungua kwa password ya ripoti</button>`;
+  const kpi = (label, value, foot, spark, tone) => `<div class="db-card db-kpi ${tone || ""}"><div class="db-kl">${label}</div><div class="db-kv">${value}</div><div class="db-kf">${foot}</div>${spark || ""}</div>`;
+  const money = (n) => `<small>TSh</small>${Math.round(n || 0).toLocaleString("en-US")}`;
+  const margin = month.total ? Math.round((month.profit / month.total) * 100) : 0;
+
+  return `<div class="db">
+  <section class="db-hero">
+    <div><h1>${greet}${who ? ", " + esc(who) : ""}</h1><p>${DOWL[dt.getUTCDay()]}, ${dt.getUTCDate()} ${MON[dt.getUTCMonth()]} ${dt.getUTCFullYear()} · biashara yako kwa jicho moja</p></div>
+    <div class="db-actions">
+      <button class="db-btn pri" onclick="setPage('sales')">＋ Rekodi mauzo</button>
+      <button class="db-btn" onclick="setPage('owed')">＋ Deni jipya</button>
+      <button class="db-btn" onclick="setPage('mainstore')">📥 Pokea mzigo</button>
+      <button class="db-btn" onclick="setPage('reports')">📊 Ripoti</button>
     </div>
-    <div class="panel">
-      <h3>Recent Payments</h3>
-      ${recentPayments.length === 0 ? `<p class="empty-note">No payments yet.</p>` : `
-      <table class="recent-table"><tbody>
-        ${recentPayments.map((p) => `
-          <tr>
-            <td>${esc(p.name)}</td>
-            <td><span class="badge ${p.kind === "owed_to_me" ? "paid" : "pending"}">${p.kind === "owed_to_me" ? "They paid" : "I paid"}</span></td>
-            <td class="rt-amount">${fmt(p.amount)}</td>
-            <td class="rt-date">${p.date}</td>
-          </tr>`).join("")}
-      </tbody></table>`}
+  </section>
+
+  <section class="db-kpis">
+    ${fin ? kpi("Mauzo leo", money(today.total), `${dbDelta(today.total, yest.total)}<span>dhidi ya jana · mistari ${today.n}</span>`) : kpi("Mauzo leo", "••••••", lock)}
+    ${fin ? kpi("Faida ghafi leo", money(today.profit), `<span>Mwezi huu: ${fmt(month.profit)}</span>`) : kpi("Faida ghafi leo", "••••••", lock)}
+    ${fin ? kpi("Mauzo mwezi huu", money(month.total), `<span class="db-delta ${margin >= 20 ? "up" : "eq"}">${margin}%</span><span>faida · matumizi ${fmt(exp)}</span>`, dbSpark(days.map((d) => d.total)), "acc") : kpi("Mauzo mwezi huu", "••••••", lock)}
+    ${kpi("Thamani ya stock", money(capD + capG), `<span>Dukani ${dbShort(capD)} · Godown ${dbShort(capG)}</span>`)}
+  </section>
+
+  <section class="db-row">
+    <div class="db-card db-span8">
+      <div class="db-h"><h3>Mauzo · siku 14</h3><div class="db-legend"><span><i class="lg1"></i>Mauzo</span>${fin ? `<span><i class="lg2"></i>Faida ghafi</span>` : ""}</div></div>
+      ${fin ? dbChart(days) : `<div class="db-ok neutral" style="display:grid;place-items:center;min-height:180px;text-align:center;gap:8px"><span>Mauzo na faida yamefichwa</span>${lock}</div>`}
     </div>
+    <div class="db-card db-span4">
+      <div class="db-h"><h3>Madeni</h3><button class="db-link" onclick="setPage('owed')">Fungua →</button></div>
+      <div class="db-pair">
+        <div><span>Kukusanya</span><b class="pos">${fmt(totalReceivable)}</b><small>wadaiwa ${owed.length}</small></div>
+        <div><span>Kulipa</span><b class="neg">${fmt(totalPayable)}</b><small>wadai ${owe.length}</small></div>
+      </div>
+      <div class="db-split" role="img" aria-label="Kukusanya dhidi ya kulipa"><i class="pos" style="flex:${Math.max(totalReceivable, 1)}"></i><i class="neg" style="flex:${Math.max(totalPayable, totalReceivable || totalPayable ? totalPayable : 1)}"></i></div>
+      <div class="db-net"><span>Hali halisi</span><b class="${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : ""}${fmt(net)}</b></div>
+      <div class="db-mini">
+        <div class="${overdue.length ? "bad" : ""}"><b>${overdue.length}</b><span>yamepita tarehe</span></div>
+        <div class="${dueToday.length ? "warn" : ""}"><b>${dueToday.length}</b><span>yanafika leo</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="db-row">
+    <div class="db-card db-span6">
+      <div class="db-h"><h3>Kumbusho za leo</h3><button class="db-link" onclick="setPage('alerts')">Zote →</button></div>
+      ${overdue.length + dueToday.length === 0 ? `<div class="db-ok">✓ Hakuna deni lililofika tarehe leo</div>` : `<div class="db-list">${[...overdue, ...dueToday].slice(0, 6).map((e) => {
+        const pay = e.kind === "i_owe", st = dueStatus(e), ph = String(e.phone || "").replace(/\D/g, ""), wa = ph ? (ph.startsWith("0") ? "255" + ph.slice(1) : ph) : "";
+        return `<div class="db-li"><div class="db-ln"><b>${esc(e.name)}</b><small>${pay ? "Unatakiwa kulipa" : "Anatakiwa kukulipa"} · ${st === "overdue" ? "imepita " + esc(e.dueDate) : "leo"}</small></div>
+          <span class="db-amt ${pay ? "neg" : "pos"}">${fmt(balanceOf(e))}</span>
+          ${!pay && wa ? `<a class="db-wa" href="https://wa.me/${wa}?text=${encodeURIComponent("Habari " + e.name + ", tunakukumbusha kwa heshima deni la " + fmt(balanceOf(e)) + ". Asante kwa ushirikiano wako.")}" target="_blank" rel="noopener" aria-label="Mkumbushe ${esc(e.name)} kwa WhatsApp">WhatsApp</a>` : ""}</div>`; }).join("")}</div>`}
+    </div>
+    <div class="db-card db-span6">
+      <div class="db-h"><h3>Stock inayohitaji hatua</h3><button class="db-link" onclick="setPage('mainstore')">Dukani →</button></div>
+      <div class="db-mini" style="margin-bottom:10px"><div class="${zero.length ? "bad" : ""}"><b>${zero.length}</b><span>zimeisha</span></div><div class="${low.length ? "warn" : ""}"><b>${low.length}</b><span>ziko chini</span></div></div>
+      ${zero.length + low.length === 0 ? `<div class="db-ok">✓ Stock zote ziko juu ya kiwango</div>` : `<div class="db-list">${[...zero, ...low].slice(0, 6).map((it) => `<div class="db-li"><div class="db-ln"><b>${esc(it.name)}</b><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"}${it.category ? " · " + esc(it.category) : ""}</small></div>
+        <span class="db-tag ${isZeroStock(it) ? "bad" : "warn"}">${isZeroStock(it) ? "Imeisha" : qtyOf(it.id) + " zimebaki"}</span></div>`).join("")}</div>`}
+    </div>
+  </section>
+
+  <section class="db-row">
+    <div class="db-card db-span6">
+      <div class="db-h"><h3>Zinazouzika zaidi · mwezi huu</h3></div>
+      ${!fin ? `<div class="db-ok neutral">${lock}</div>` : topItems.length ? `<div class="db-list">${topItems.map((x, i) => `<div class="db-rank"><span class="db-n">${i + 1}</span><div class="db-ln"><b>${esc(x.name)}</b><div class="db-meter"><i style="width:${Math.round((x.total / topMax) * 100)}%"></i></div></div><span class="db-amt">${fmt(x.total)}<small>${x.qty} pcs</small></span></div>`).join("")}</div>` : `<div class="db-ok neutral">Bado hakuna mauzo mwezi huu</div>`}
+    </div>
+    <div class="db-card db-span6">
+      <div class="db-h"><h3>Malipo ya karibuni</h3><button class="db-link" onclick="setPage('reports')">Ripoti →</button></div>
+      ${recentPayments.length === 0 ? `<div class="db-ok neutral">Bado hakuna malipo</div>` : `<div class="db-list">${recentPayments.map((p) => `<div class="db-li"><div class="db-ln"><b>${esc(p.name)}</b><small>${esc(p.date)} · ${p.kind === "owed_to_me" ? "amekulipa" : "umemlipa"}</small></div><span class="db-amt ${p.kind === "owed_to_me" ? "pos" : "neg"}">${p.kind === "owed_to_me" ? "+" : "−"}${fmt(p.amount)}</span></div>`).join("")}</div>`}
+    </div>
+  </section>
   </div>`;
 }
 
