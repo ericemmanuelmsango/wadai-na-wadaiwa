@@ -820,7 +820,7 @@ function renderPage(page) {
   if (page === "sales") return renderSalesPage();
   if (page === "owed") return guardFinancials(() => renderColumnPage("owed_to_me"));
   if (page === "owe") return guardFinancials(() => renderColumnPage("i_owe"));
-  if (page === "settings") return renderSettings();
+  if (page === "settings") return renderSettings() + purgedSection();
   return renderDashboard();
 }
 
@@ -3706,7 +3706,19 @@ function repArchived(x) {
   const cut = Number(STATE.settings.reportClearedAt) || 0;
   return x.ts <= cut || x.ts <= (A["c:" + repCust(x)] || 0) || x.ts <= (A["d:" + x.date] || 0);
 }
-function reportLines() {
+/* Mauzo yaliyoondolewa kwenye ripoti baada ya kuchukua PDF (settings.repPurge). Hayafutwi kwenye database
+   wala stock haiguswi — yanafichwa tu kwenye ripoti, History na dashboard; yanarudishwa kutoka Settings. */
+function repPurged(x) {
+  const P = STATE.settings.repPurge || [];
+  if (!P.length) return false;
+  const c = repCust(x), ts = x.ts || 0;
+  return P.some((p) => !p.restored && x.date >= p.from && x.date <= p.to && (!p.cust || c === p.cust) && ts <= p.at);
+}
+function reportLines(opts) {
+  const all = reportLinesAll();
+  return opts && opts.withPurged ? all : all.filter((x) => !repPurged(x));
+}
+function reportLinesAll() {
   const day = (d) => Date.parse((d || "1970-01-01") + "T00:00:00");
   const out = STATE.sales.map((x) => ({ ...x, ts: x.createdAt || day(x.date) }));
   (STATE.posSales || []).filter((x) => !x.deleted).forEach((x) => (x.items || []).forEach((i, n) => out.push({
@@ -3804,7 +3816,12 @@ function pdfPanel() {
       <option value="">👥 Wateja wote</option>
       ${names.map((n) => `<option value="${esc(n)}" ${UI.pdfCust === n ? "selected" : ""}>👤 ${esc(n)}</option>`).join("")}
     </select>
-    <div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="downloadReportPdf()">⬇️ Pakua PDF</button><button class="btn btn-sm btn-ghost" onclick="UI.pdfOpen=false;rerender();">Funga</button></div>
+    <div style="display:flex;gap:8px"><button class="btn btn-sm btn-primary" onclick="downloadReportPdf()">⬇️ Pakua PDF</button><button class="btn btn-sm btn-ghost" onclick="UI.pdfOpen=false;UI.pdfDone=null;rerender();">Funga</button></div>
+    ${UI.pdfDone ? `<div style="margin-top:12px;border:1px solid #f3d9a4;background:#fff7e6;color:#7a4a00;border-radius:8px;padding:10px 12px;font-size:13px;display:grid;gap:8px">
+      <div>✅ PDF imehifadhiwa — mauzo <b>${UI.pdfDone.count}</b> ${UI.pdfDone.cust ? "ya <b>" + esc(UI.pdfDone.cust) + "</b> " : ""}(${esc(UI.pdfDone.from)} → ${esc(UI.pdfDone.to)}).</div>
+      <div>Unataka kuyaondoa kabisa kwenye ripoti sasa? Hayataonekana tena kwenye Reports, History wala Dashboard. Yanabaki salama — ukiyahitaji, yapo Settings → 🗃️ Mauzo yaliyoondolewa.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-sm" style="background:#b91c1c;color:#fff" onclick="purgeAfterPdf()">🗑️ Ondoa kwenye ripoti</button><button class="btn btn-sm btn-ghost" onclick="UI.pdfDone=null;rerender();">Hapana, yaache</button></div>
+    </div>` : ""}
   </div>`;
 }
 function loadScriptOnce(src) {
@@ -3814,10 +3831,11 @@ function loadScriptOnce(src) {
     document.head.appendChild(el);
   });
 }
-async function downloadReportPdf() {
-  const from = UI.pdfFrom || "0000-01-01", to = UI.pdfTo || "9999-12-31", only = UI.pdfCust || "";
+async function downloadReportPdf(purgeId) {
+  const pg = purgeId ? (STATE.settings.repPurge || []).find((p) => p.id === purgeId) : null;
+  const from = pg ? pg.from : UI.pdfFrom || "0000-01-01", to = pg ? pg.to : UI.pdfTo || "9999-12-31", only = pg ? pg.cust || "" : UI.pdfCust || "";
   if (from > to) { alert("Tarehe ya kuanzia iko baada ya tarehe ya mwisho."); return; }
-  const lines = reportLines().filter((x) => x.date >= from && x.date <= to && (!only || repCust(x) === only))
+  const lines = (pg ? reportLines({ withPurged: true }).filter((x) => (x.ts || 0) <= pg.at) : reportLines()).filter((x) => x.date >= from && x.date <= to && (!only || repCust(x) === only))
     .sort((a, b) => (a.date === b.date ? (a.ts || 0) - (b.ts || 0) : a.date < b.date ? -1 : 1));
   try {
     await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
@@ -3882,7 +3900,35 @@ async function downloadReportPdf() {
   const n = doc.getNumberOfPages();
   for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text("Ukurasa " + i + " / " + n, 196, 290, { align: "right" }); }
   const safe = (only || "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  doc.save("Ripoti-" + (safe ? safe + "-" : "") + (UI.pdfFrom || "mwanzo") + "_" + (UI.pdfTo || todayStr()) + ".pdf");
+  doc.save("Ripoti-" + (safe ? safe + "-" : "") + from + "_" + to + ".pdf");
+  if (!pg && lines.length) { UI.pdfDone = { from, to, cust: only, count: lines.length }; UI.pdfOpen = true; rerender(); }
+}
+/* baada ya PDF: ondoa mauzo hayo kwenye ripoti (yanabaki salama, yanarudishwa kutoka Settings) */
+function repToast(m) { UI.toastMsg = m; rerender(); setTimeout(() => { if (UI.toastMsg === m) { UI.toastMsg = ""; rerender(); } }, 2800); }
+function purgeAfterPdf() {
+  const d = UI.pdfDone; if (!d) return;
+  const what = (d.cust ? "ya " + d.cust + " " : "") + "kuanzia " + d.from + " hadi " + d.to;
+  if (!confirm("Ondoa mauzo " + d.count + " " + what + " kwenye ripoti?\n\nHayataonekana kwenye Reports, History wala Dashboard.\nHayafutwi kwenye database na stock haiguswi — ukiyahitaji, yarudishe kutoka Settings → Mauzo yaliyoondolewa.")) return;
+  const P = (STATE.settings.repPurge || []).slice();
+  P.push({ id: uid(), from: d.from, to: d.to, cust: d.cust || "", at: Date.now(), count: d.count });
+  STATE.settings.repPurge = P; UI.pdfDone = null; UI.pdfOpen = false;
+  saveSettings(); repToast("🗑️ Mauzo " + d.count + " yameondolewa kwenye ripoti");
+}
+function restorePurge(id) {
+  const p = (STATE.settings.repPurge || []).find((x) => x.id === id); if (!p) return;
+  if (!confirm("Rudisha mauzo ya " + p.from + " hadi " + p.to + (p.cust ? " (" + p.cust + ")" : "") + " kwenye ripoti?")) return;
+  STATE.settings.repPurge = (STATE.settings.repPurge || []).filter((x) => x.id !== id);
+  saveSettings(); repToast("↩️ Yamerudishwa kwenye ripoti");
+}
+function purgedSection() {
+  const P = (STATE.settings.repPurge || []).slice().reverse();
+  return `<div class="panel" style="margin-top:16px">
+    <h3>🗃️ Mauzo yaliyoondolewa kwenye ripoti</h3>
+    <p style="font-size:12px;color:#6b7280;margin:4px 0 10px">Haya ni mauzo uliyoyaondoa baada ya kuchukua PDF. Bado yako salama — unaweza kupakua PDF yake tena au kuyarudisha kwenye ripoti.</p>
+    ${!P.length ? `<p class="empty-note">Hakuna mauzo yaliyoondolewa.</p>` : P.map((p) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 0;border-top:1px solid var(--line)">
+      <div><b>${esc(p.from)} → ${esc(p.to)}</b> ${p.cust ? "· 👤 " + esc(p.cust) : "· 👥 Wateja wote"}<div style="font-size:11.5px;color:#8290a4">Mistari ${p.count || "?"} · yaliondolewa ${new Date(p.at).toLocaleString("en-GB")}</div></div>
+      <div style="display:flex;gap:6px"><button class="btn btn-sm btn-ghost" onclick="downloadReportPdf('${p.id}')">⬇️ PDF</button><button class="btn btn-sm btn-primary" onclick="restorePurge('${p.id}')">↩️ Rudisha</button></div></div>`).join("")}
+  </div>`;
 }
 function printReport() {
   const el = document.getElementById("sales-report-print");
