@@ -2993,64 +2993,85 @@ const DB_ICON = {
   lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
 };
 const dbIc = (k, cls) => `<svg class="${cls || "db-ico"}" viewBox="0 0 24 24" aria-hidden="true">${DB_ICON[k]}</svg>`;
-function dbDonut(parts, total, label) {
+function dbDonut(parts, total, label, unit, count) {
   const R = 54, C = 2 * Math.PI * R; let off = 0;
-  const segs = parts.map((p) => { const len = total ? (p.v / total) * C : 0; const el = `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${p.c}" stroke-width="22" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"><title>${esc(p.k)}: ${fmt(p.v)}</title></circle>`; off += len; return el; }).join("");
+  const segs = parts.map((p) => { const len = total ? (p.v / total) * C : 0; const el = `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${p.c}" stroke-width="22" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"><title>${esc(p.k)}: ${count ? p.v : fmt(p.v)}</title></circle>`; off += len; return el; }).join("");
   return `<svg viewBox="0 0 140 140" class="db-donut" role="img" aria-label="${esc(label)}"><circle cx="70" cy="70" r="${R}" fill="none" class="db-donut-bg" stroke-width="22"/>${segs}
-    <text x="70" y="67" text-anchor="middle" class="db-donut-v">${dbShort(total)}</text><text x="70" y="85" text-anchor="middle" class="db-donut-l">TSh</text></svg>`;
+    <text x="70" y="67" text-anchor="middle" class="db-donut-v">${count ? total : dbShort(total)}</text><text x="70" y="85" text-anchor="middle" class="db-donut-l">${esc(unit || "TSh")}</text></svg>`;
 }
 function dbTopBars(items) {
   const max = Math.max(1, ...items.map((x) => x.qty));
   return `<div class="db-hb">${items.map((x, i) => `<div class="db-hbr"><span class="db-n">${i + 1}</span><div class="db-hbm"><div class="db-hbt"><b title="${esc(x.name)}">${esc(x.name)}</b><span>${x.qty} pcs</span></div>
     <div class="db-hbbar"><i style="width:${Math.max(4, Math.round((x.qty / max) * 100))}%"></i></div><small>${fmt(x.total)}</small></div></div>`).join("")}</div>`;
 }
+DB_ICON.users = '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>';
+DB_ICON.alert = '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>';
+DB_ICON.wallet = '<path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h15V9H5a2 2 0 0 1-2-2z"/><circle cx="16" cy="14.5" r="1.3"/>';
+DB_ICON.truck = '<path d="M2 6h11v10H2zM13 10h4l4 4v2h-8z"/><circle cx="6" cy="18" r="1.8"/><circle cx="17" cy="18" r="1.8"/>';
+DB_ICON.money = '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.6"/><path d="M6 12h.01M18 12h.01"/>';
+DB_ICON.edit = '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>';
 function renderDashboard() {
-  const active = STATE.entries.filter((e) => !e.archived);
-  const owed = active.filter((e) => e.kind === "owed_to_me"), owe = active.filter((e) => e.kind === "i_owe");
-  const totalReceivable = owed.reduce((s, e) => s + Math.max(balanceOf(e), 0), 0);
-  const totalPayable = owe.reduce((s, e) => s + Math.max(balanceOf(e), 0), 0);
-  const overdue = active.filter((e) => dueStatus(e) === "overdue"), dueToday = active.filter((e) => dueStatus(e) === "today");
-  const net = totalReceivable - totalPayable;
   const fin = !!UI.financialsUnlocked;
-
-  // mauzo (Sales + POS) — kanuni zilezile za Reports
-  const t = todayStr(), yd = dbDay(t, -1), m0 = t.slice(0, 8) + "01", f14 = dbDay(t, -13);
-  const lines = reportLines().filter((x) => (x.date || "") >= (m0 < f14 ? m0 : f14));
-  const sum = (from, to) => { const L = lines.filter((x) => x.date >= from && x.date <= to); return { total: L.reduce((a, x) => a + (x.total || 0), 0), profit: L.reduce((a, x) => a + repProfit(x), 0), n: L.length }; };
-  const today = sum(t, t), yest = sum(yd, yd), month = sum(m0, t);
-  const days = Array.from({ length: 14 }, (_, i) => dbDay(f14, i)).map((d) => ({ date: d, ...sum(d, d) }));
-  const top = {}; lines.filter((x) => x.date >= m0).forEach((x) => { const k = x.itemName || "—"; (top[k] = top[k] || { name: k, qty: 0, total: 0 }); top[k].qty += x.qty || 0; top[k].total += x.total || 0; });
+  const t = todayStr(), m0 = t.slice(0, 8) + "01";
+  const lines = reportLines().filter((x) => (x.date || "") >= m0);
+  const top = {}; lines.forEach((x) => { const k = x.itemName || "—"; (top[k] = top[k] || { name: k, qty: 0, total: 0 }); top[k].qty += x.qty || 0; top[k].total += x.total || 0; });
   const topItems = Object.values(top).sort((a, b) => b.qty - a.qty).slice(0, 5);
+  const expTotal = expensesIn(m0, t).reduce((a, x) => a + Number(x.amount || 0), 0);
 
-  // matumizi ya mwezi huu kwa kundi
-  const exps = expensesIn(m0, t), expTotal = exps.reduce((a, x) => a + Number(x.amount || 0), 0);
-  const byCat = {}; exps.forEach((x) => (byCat[x.category || "Mengineyo"] = (byCat[x.category || "Mengineyo"] || 0) + Number(x.amount || 0)));
-  const PAL = ["#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#94a3b8"];
-  const expParts = Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v], i) => ({ k, v, c: PAL[i % PAL.length] }));
+  // bidhaa na stock
+  const prods = STATE.products.filter((x) => !x.deleted);
+  const items = STATE.stockItems;
+  const nD = storeItems("dukani").length, nG = storeItems("godown").length;
+  const zero = items.filter((it) => isZeroStock(it)), low = items.filter((it) => isLowStock(it) && !isZeroStock(it));
+  const PAL = ["#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#8b5cf6", "#94a3b8"];
+  const cats = {}; items.forEach((it) => { const k = it.category || "Mengineyo"; cats[k] = (cats[k] || 0) + 1; });
+  let catList = Object.entries(cats).sort((a, b) => b[1] - a[1]);
+  if (catList.length > 6) { const rest = catList.slice(5).reduce((a, x) => a + x[1], 0); catList = [...catList.slice(0, 5), ["Mengineyo", rest]]; }
+  const catParts = catList.map(([k, v], i) => ({ k, v, c: PAL[i % PAL.length] }));
 
-  // stock
-  const cap = (st) => storeItems(st).reduce((s, it) => { const q = qtyOf(it.id), a = buyPriceOf(it); return s + (q > 0 && a != null ? q * a : 0); }, 0);
-  const capD = cap("dukani"), capG = cap("godown");
-  const zero = STATE.stockItems.filter((it) => isZeroStock(it)), low = STATE.stockItems.filter((it) => isLowStock(it) && !isZeroStock(it));
-  const ending = [...zero, ...low];
+  // wasambazaji (kutoka mizigo iliyopokelewa)
+  const sup = new Set();
+  (STATE.deliveries || []).filter((d) => !d.archived && d.supplier).forEach((d) => sup.add(String(d.supplier).trim().toLowerCase()));
+  STATE.stockMovements.filter((m) => m.type === "in" && m.supplier && !/^(bidhaa mpya|godown transfer)$/i.test(m.supplier)).forEach((m) => sup.add(String(m.supplier).trim().toLowerCase()));
+
+  // shughuli za karibuni
+  const day = (d) => Date.parse((d || "1970-01-01") + "T12:00:00");
+  const acts = [];
+  (STATE.posSales || []).filter((x) => !x.deleted).forEach((x) => acts.push({ ts: x.createdAt || day(x.date), ic: "cart", tone: "green", title: "Mauzo " + (x.no || ""), sub: (x.customer || "Mteja wa kawaida") + " · spea " + (x.items || []).reduce((a, i) => a + (Number(i.qty) || 0), 0), amt: fin ? fmt(x.total) : "" }));
+  STATE.sales.forEach((x) => acts.push({ ts: x.createdAt || day(x.date), ic: "cart", tone: "green", title: "Mauzo: " + (x.itemName || ""), sub: (x.customer || "Mteja wa kawaida") + " · " + x.qty + " pcs", amt: fin ? fmt(x.total) : "" }));
+  (STATE.deliveries || []).filter((d) => !d.archived).forEach((d) => acts.push({ ts: d.createdAt || day(d.date), ic: "truck", tone: "blue", title: "Mzigo umepokelewa", sub: (d.supplier || "Msambazaji") + " · bidhaa " + (d.rows || []).length + " · " + ((d.store || "dukani") === "godown" ? "Godown" : "Dukani"), amt: "" }));
+  STATE.entries.filter((e) => !e.archived).forEach((e) => (e.payments || []).forEach((p) => acts.push({ ts: p.createdAt || day(p.date), ic: "money", tone: "purple", title: e.kind === "owed_to_me" ? "Malipo: " + e.name : "Umemlipa " + e.name, sub: e.kind === "owed_to_me" ? "deni limepungua" : "deni lako limepungua", amt: fmt(p.amount) })));
+  acts.sort((a, b) => b.ts - a.ts);
+  const alerts = zero.slice(0, 2).map((it) => ({ ts: Date.now(), ic: "alert", tone: "red", title: "Stock imeisha", sub: it.name + " · " + ((it.store || "dukani") === "godown" ? "Godown" : "Dukani"), amt: "" }));
+  const feed = [...alerts, ...acts].slice(0, 5);
+  const when = (ts) => { const d = new Date(ts); return d.getDate() + " " + ["Jan", "Feb", "Mac", "Apr", "Mei", "Jun", "Jul", "Ago", "Sep", "Okt", "Nov", "Des"][d.getMonth()] + " · " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+
+  // bidhaa za karibuni (zilizoongezwa mwisho)
+  const qtyByName = {}; items.forEach((it) => { const k = it.name.toLowerCase(); qtyByName[k] = (qtyByName[k] || 0) + qtyOf(it.id); });
+  const itemByName = {}; items.forEach((it) => { itemByName[it.name.toLowerCase()] = itemByName[it.name.toLowerCase()] || it; });
+  const recent = prods.slice(-6).reverse();
 
   const MON = ["Januari", "Februari", "Machi", "Aprili", "Mei", "Juni", "Julai", "Agosti", "Septemba", "Oktoba", "Novemba", "Desemba"], DOWL = ["Jumapili", "Jumatatu", "Jumanne", "Jumatano", "Alhamisi", "Ijumaa", "Jumamosi"];
   const now = new Date(), dt = new Date(t + "T12:00:00Z");
   const who = (STATE.settings && STATE.settings.ownerName) || "Eric";
   const lock = `<button class="db-lockw" onclick="setPage('reports')">${dbIc("lock", "db-ico-s")} Fungua kwa password ya ripoti</button>`;
-  const big = (n) => `TSh ${Math.round(n || 0).toLocaleString("en-US")}`;
-  const deltaW = (cur, prev) => { if (!prev && !cur) return "—"; if (!prev) return "▲ mpya leo"; const p = Math.round(((cur - prev) / prev) * 100); return (p >= 0 ? "▲ " : "▼ ") + Math.abs(p) + "% dhidi ya jana"; };
-  const margin = month.total ? Math.round((month.profit / month.total) * 100) : 0;
   const kpi = (tone, icon, label, value, sub) => `<div class="db-kc ${tone}"><div class="db-kt">${dbIc(icon)}</div><div class="db-kb"><div class="db-kl">${label}</div><div class="db-kv">${value}</div><div class="db-ks">${sub}</div></div></div>`;
-  const hidden = `<span class="db-dots">••••••</span>`;
+  const nameJs = (n) => esc(n).replace(/'/g, "&#39;");
 
   return `<div class="db">
   <section class="db-hero">
-    <div><h1>Karibu, ${esc(who)}!</h1><p>Hiki ndicho kinachoendelea kwenye biashara yako leo.</p></div>
+    <div><h1>Karibu, ${esc(who)}!</h1><p>Hiki ndicho kinachoendelea kwenye biashara yako ya spea leo.</p></div>
     <div class="db-heror">
       <div class="db-date">${dbIc("cal", "db-ico-d")}<div><b>${dt.getUTCDate()} ${MON[dt.getUTCMonth()].slice(0, 3)} ${dt.getUTCFullYear()}</b><small>${DOWL[dt.getUTCDay()]}, ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}</small></div></div>
       <button class="db-btn pri" onclick="setPage('mainstore')">${dbIc("inbox", "db-ico-s")} Pokea mzigo</button>
     </div>
+  </section>
+
+  <section class="db-kpis">
+    ${kpi("blue", "box", "Bidhaa zote", prods.length.toLocaleString("en-US"), `Dukani ${nD} · Godown ${nG}`)}
+    ${kpi("green", "wallet", "Matumizi ya mwezi huu", fin ? fmt(expTotal) : `<span class="db-dots">••••••</span>`, fin ? `<span class="db-kl-a" onclick="setPage('expenses')">Fungua matumizi →</span>` : lock)}
+    ${kpi("orange", "alert", "Vitu vinavyoisha", (zero.length + low.length).toLocaleString("en-US"), zero.length + low.length ? `⚠ ${zero.length} zimeisha · ${low.length} ziko chini — agiza tena` : "✓ Stock iko sawa")}
+    ${kpi("purple", "users", "Wasambazaji", sup.size.toLocaleString("en-US"), sup.size ? "kutoka mizigo uliyopokea" : "Bado hujarekodi mzigo")}
   </section>
 
   <section class="db-row">
@@ -3059,18 +3080,25 @@ function renderDashboard() {
       ${!fin ? `<div class="db-ok neutral db-center">${lock}</div>` : topItems.length ? dbTopBars(topItems) : `<div class="db-ok neutral">Bado hakuna mauzo mwezi huu</div>`}
     </div>
     <div class="db-card db-span4">
-      <div class="db-h"><h3>Matumizi · mwezi huu</h3><button class="db-link" onclick="setPage('expenses')">Fungua →</button></div>
-      ${!fin ? `<div class="db-ok neutral db-center">${lock}</div>` : !expParts.length ? `<div class="db-ok neutral">Hakuna matumizi yaliyorekodiwa mwezi huu</div>` :
-        `<div class="db-donutw">${dbDonut(expParts, expTotal, "Matumizi kwa kundi")}<div class="db-keys">${expParts.slice(0, 6).map((p) => `<div><i style="background:${p.c}"></i><span>${esc(p.k)}</span><b>${expTotal ? Math.round((p.v / expTotal) * 100) : 0}%</b></div>`).join("")}</div></div>
-         <div class="db-net" style="border:0;margin:6px 0 0;padding:0"><span>Jumla ya matumizi</span><b class="neg">${fmt(expTotal)}</b></div>`}
+      <div class="db-h"><h3>Stock kwa kundi</h3><button class="db-link" onclick="setPage('products')">Bidhaa →</button></div>
+      ${!catParts.length ? `<div class="db-ok neutral">Bado hakuna bidhaa kwenye stock</div>` : `<div class="db-donutw">${dbDonut(catParts, items.length, "Stock kwa kundi", "bidhaa", true)}<div class="db-keys">${catParts.map((p) => `<div><i style="background:${p.c}"></i><span>${esc(p.k)}</span><b>${Math.round((p.v / items.length) * 100)}%</b></div>`).join("")}</div></div>`}
     </div>
     <div class="db-card db-span4">
-      <div class="db-h"><h3>Vitu vinavyoisha</h3><button class="db-link" onclick="setPage('mainstore')">Dukani →</button></div>
-      <div class="db-mini" style="margin-bottom:8px"><div class="${zero.length ? "bad" : ""}"><b>${zero.length}</b><span>zimeisha</span></div><div class="${low.length ? "warn" : ""}"><b>${low.length}</b><span>ziko chini</span></div></div>
-      ${!ending.length ? `<div class="db-ok">✓ Stock zote ziko juu ya kiwango</div>` : `<div class="db-list">${ending.slice(0, 6).map((it) => `<div class="db-li"><div class="db-ln"><b>${esc(it.name)}</b><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"}${it.category ? " · " + esc(it.category) : ""}</small></div>
-        <span class="db-tag ${isZeroStock(it) ? "bad" : "warn"}">${isZeroStock(it) ? "Imeisha" : qtyOf(it.id) + " zimebaki"}</span></div>`).join("")}${ending.length > 6 ? `<button class="db-link" style="margin-top:6px" onclick="setPage('alerts')">+ ${ending.length - 6} zaidi →</button>` : ""}</div>`}
+      <div class="db-h"><h3>Shughuli za karibuni</h3></div>
+      ${!feed.length ? `<div class="db-ok neutral">Bado hakuna shughuli</div>` : `<div class="db-list">${feed.map((a) => `<div class="db-act"><span class="db-ai ${a.tone}">${dbIc(a.ic, "db-ico-a")}</span><div class="db-ln"><b>${esc(a.title)}</b><small>${esc(a.sub)}</small></div><div class="db-aw">${a.amt ? `<b>${a.amt}</b>` : ""}<small>${when(a.ts)}</small></div></div>`).join("")}</div>`}
     </div>
   </section>
+
+  <section class="db-card">
+    <div class="db-h"><h3>Bidhaa za karibuni</h3><button class="db-btn pri sm" onclick="setPage('products')">＋ Ongeza bidhaa</button></div>
+    ${!recent.length ? `<div class="db-ok neutral">Bado hakuna bidhaa. Bonyeza ＋ Ongeza bidhaa.</div>` : `<div class="db-tw"><table class="db-t"><thead><tr><th>#</th><th>Picha</th><th>Jina la bidhaa</th><th>Kundi</th><th class="r">Stock</th><th class="r">Bei (TSh)</th><th>Hali</th><th></th></tr></thead><tbody>
+      ${recent.map((pr, i) => { const k = pr.name.toLowerCase(), it = itemByName[k], q = qtyByName[k] || 0, st = !it ? ["mute", "Haipo stock"] : q <= 0 ? ["bad", "Imeisha"] : isLowStock(it) ? ["warn", "Inakaribia kuisha"] : ["good", "Ipo"];
+        return `<tr><td class="m">${i + 1}</td><td>${photoBox(pr.name, "ph-box db-ph")}</td><td><b>${esc(pr.name)}</b></td><td class="m">${esc((it && it.category) || "—")}</td><td class="r">${it ? q : "—"}</td><td class="r">${Math.round(pr.price || 0).toLocaleString("en-US")}</td><td><span class="db-tag ${st[0]}">${st[1]}</span></td>
+          <td><button class="db-ed" aria-label="Badilisha ${esc(pr.name)}" onclick="UI.productSearch='${nameJs(pr.name)}';setPage('products')">${dbIc("edit", "db-ico-s")}</button></td></tr>`; }).join("")}
+    </tbody></table></div>`}
+  </section>
+
+  <div class="db-foot"><span>Stock bora · Kazi rahisi · Faida zaidi</span><span>Spea leo · Safari salama kesho</span></div>
   </div>`;
 }
 
