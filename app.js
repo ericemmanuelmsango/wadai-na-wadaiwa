@@ -304,10 +304,19 @@ function oneTimeProductImport() {
   BULK_PRODUCTS.forEach((it) => { if (!have.has(it.name.toLowerCase())) { STATE.products.push({ id: uid(), name: it.name, price: it.price, buyPrice: it.buyPrice }); have.add(it.name.toLowerCase()); } });
   Promise.resolve(saveProducts()).then(() => { STATE.settings.productImportId = PRODUCT_IMPORT_ID; saveSettings(); oneTimeProductImport.busy = false; });
 }
+/* Nakala ya hati zote kwenye kumbukumbu: kila badiliko linasoma hati zilizobadilika TU (si zote — picha
+   na sehemu kubwa zilikuwa zinasomwa upya kila mauzo, mfumo ukawa mzito kwenye tablet). */
+const _DOCS = {}, _DOC_KB = {};
 function startSplitListener() {
   return colRef.onSnapshot({ includeMetadataChanges: true }, (snap) => {
-    const docs = {};
-    snap.forEach((d) => { docs[d.id] = d.data(); });
+    const changes = typeof snap.docChanges === "function" ? snap.docChanges() : null;
+    if (changes && Object.keys(_DOCS).length) {
+      changes.forEach((c) => { const id = c.doc.id; if (c.type === "removed") { delete _DOCS[id]; delete _DOC_KB[id]; } else { _DOCS[id] = c.doc.data(); _DOC_KB[id] = -1; } });
+    } else {
+      Object.keys(_DOCS).forEach((k) => { delete _DOCS[k]; delete _DOC_KB[k]; });
+      snap.forEach((d) => { _DOCS[d.id] = d.data(); _DOC_KB[d.id] = -1; });
+    }
+    const docs = _DOCS;
     const main = docs.data || {};
     const result = { settings: main.settings };
     let parts = 0, biggest = 0;
@@ -328,7 +337,7 @@ function startSplitListener() {
         result[f] = main[f] || [];
       }
     });
-    Object.keys(docs).forEach((id) => { parts++; biggest = Math.max(biggest, JSON.stringify(docs[id]).length); });
+    Object.keys(docs).forEach((id) => { parts++; if (_DOC_KB[id] == null || _DOC_KB[id] < 0) _DOC_KB[id] = id.startsWith("pimg_") ? 0 : JSON.stringify(docs[id]).length; biggest = Math.max(biggest, _DOC_KB[id]); });
     STORAGE_INFO = { parts, biggestKB: Math.round(biggest / 1024) };
     // Sales made in the separate POS app (one document each) — they reduce stock here too.
     STATE.posSales = Object.keys(docs).filter((id) => id.startsWith("possale_")).map((id) => docs[id]);
@@ -568,7 +577,7 @@ function rerender() {
 }
 
 function render() {
-  invalidateStock();
+  invalidateStock(); invalidateLookups();
   const root = document.getElementById("app");
   if (!CONFIG_IS_SET) {
     root.innerHTML = renderSetupNotice();
@@ -2615,8 +2624,21 @@ const IMG_PRE = "pimg_";
 const imgKey = (name) => String(name || "").trim().toLowerCase().replace(/\s+/g, " ");
 function imgDocId(name) { let h = 2166136261; for (const ch of imgKey(name)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; } return IMG_PRE + h.toString(16); }
 function photoOf(name) { return (STATE.images && STATE.images[imgKey(name)]) || ""; }
+/* <img src> ya picha: blob URL fupi badala ya data URL ndefu — ukurasa unajengwa haraka na picha haisomwi upya kila mara */
+const _photoUrls = new Map();
+function photoSrc(name) {
+  const d = photoOf(name); if (!d) return "";
+  let u = _photoUrls.get(d);
+  if (!u) {
+    try { const i = d.indexOf(","), mime = (/^data:([^;,]+)/.exec(d) || [])[1] || "image/jpeg", bin = atob(d.slice(i + 1)), arr = new Uint8Array(bin.length);
+      for (let k = 0; k < bin.length; k++) arr[k] = bin.charCodeAt(k);
+      u = URL.createObjectURL(new Blob([arr], { type: mime })); } catch (e) { u = d; }
+    _photoUrls.set(d, u);
+  }
+  return u;
+}
 function photoBox(name, cls = "ph-box") {
-  const p = photoOf(name);
+  const p = photoSrc(name);
   return p ? `<button type="button" class="${cls}" title="Badilisha au ondoa picha" onclick="event.stopPropagation();openPhotoTaker('${esc(name).replace(/'/g, "&#39;")}')"><img src="${p}" alt="" loading="lazy"></button>`
     : `<button type="button" class="${cls} ph-empty" title="Piga picha ya bidhaa hii" onclick="event.stopPropagation();openPhotoTaker('${esc(name).replace(/'/g, "&#39;")}')">📷<span>Weka picha</span></button>`;
 }
@@ -3036,11 +3058,11 @@ function renderDashboard() {
 
   // shughuli za karibuni
   const day = (d) => Date.parse((d || "1970-01-01") + "T12:00:00");
-  const acts = [];
-  (STATE.posSales || []).filter((x) => !x.deleted).forEach((x) => acts.push({ ts: x.createdAt || day(x.date), ic: "cart", tone: "green", title: "Mauzo " + (x.no || ""), sub: (x.customer || "Mteja wa kawaida") + " · spea " + (x.items || []).reduce((a, i) => a + (Number(i.qty) || 0), 0), amt: fin ? fmt(x.total) : "" }));
-  STATE.sales.forEach((x) => acts.push({ ts: x.createdAt || day(x.date), ic: "cart", tone: "green", title: "Mauzo: " + (x.itemName || ""), sub: (x.customer || "Mteja wa kawaida") + " · " + x.qty + " pcs", amt: fin ? fmt(x.total) : "" }));
-  (STATE.deliveries || []).filter((d) => !d.archived).forEach((d) => acts.push({ ts: d.createdAt || day(d.date), ic: "truck", tone: "blue", title: "Mzigo umepokelewa", sub: (d.supplier || "Msambazaji") + " · bidhaa " + (d.rows || []).length + " · " + ((d.store || "dukani") === "godown" ? "Godown" : "Dukani"), amt: "" }));
-  STATE.entries.filter((e) => !e.archived).forEach((e) => (e.payments || []).forEach((p) => acts.push({ ts: p.createdAt || day(p.date), ic: "money", tone: "purple", title: e.kind === "owed_to_me" ? "Malipo: " + e.name : "Umemlipa " + e.name, sub: e.kind === "owed_to_me" ? "deni limepungua" : "deni lako limepungua", amt: fmt(p.amount) })));
+  const acts = [], since = dbDay(t, -14), recentOk = (d) => (d || "") >= since;
+  (STATE.posSales || []).filter((x) => !x.deleted && recentOk(x.date)).forEach((x) => acts.push({ ts: x.createdAt || day(x.date), ic: "cart", tone: "green", title: "Mauzo " + (x.no || ""), sub: (x.customer || "Mteja wa kawaida") + " · spea " + (x.items || []).reduce((a, i) => a + (Number(i.qty) || 0), 0), amt: fin ? fmt(x.total) : "" }));
+  STATE.sales.filter((x) => recentOk(x.date)).forEach((x) => acts.push({ ts: x.createdAt || day(x.date), ic: "cart", tone: "green", title: "Mauzo: " + (x.itemName || ""), sub: (x.customer || "Mteja wa kawaida") + " · " + x.qty + " pcs", amt: fin ? fmt(x.total) : "" }));
+  (STATE.deliveries || []).filter((d) => !d.archived && recentOk(d.date)).forEach((d) => acts.push({ ts: d.createdAt || day(d.date), ic: "truck", tone: "blue", title: "Mzigo umepokelewa", sub: (d.supplier || "Msambazaji") + " · bidhaa " + (d.rows || []).length + " · " + ((d.store || "dukani") === "godown" ? "Godown" : "Dukani"), amt: "" }));
+  STATE.entries.filter((e) => !e.archived).forEach((e) => (e.payments || []).filter((p) => recentOk(p.date)).forEach((p) => acts.push({ ts: p.createdAt || day(p.date), ic: "money", tone: "purple", title: e.kind === "owed_to_me" ? "Malipo: " + e.name : "Umemlipa " + e.name, sub: e.kind === "owed_to_me" ? "deni limepungua" : "deni lako limepungua", amt: fmt(p.amount) })));
   acts.sort((a, b) => b.ts - a.ts);
   const alerts = zero.slice(0, 2).map((it) => ({ ts: Date.now(), ic: "alert", tone: "red", title: "Stock imeisha", sub: it.name + " · " + ((it.store || "dukani") === "godown" ? "Godown" : "Dukani"), amt: "" }));
   const feed = [...alerts, ...acts].slice(0, 5);
@@ -3268,7 +3290,7 @@ function salePickTiles(f) {
     const n = inSale[i.name.toLowerCase()] || 0;
     return `<button type="button" class="pick-tile${i.qty <= 0 ? " out" : ""}${n ? " on" : ""}" onclick="pickSaleItem('${i.id}')" ${i.qty <= 0 ? "disabled" : ""}>
       ${n ? `<span class="pk-n">🛒 ${n}</span>` : ""}
-      ${photoOf(i.name) ? `<span class="pk-ph"><img src="${photoOf(i.name)}" alt="" loading="lazy"></span>` : ""}<span class="pk-name">${esc(i.name)}</span><span class="pk-cat">${esc(i.cat)}</span>
+      ${photoOf(i.name) ? `<span class="pk-ph"><img src="${photoSrc(i.name)}" alt="" loading="lazy"></span>` : ""}<span class="pk-name">${esc(i.name)}</span><span class="pk-cat">${esc(i.cat)}</span>
       <span class="pk-price">${i.price ? fmt(i.price) : "No price"}</span>
       <span class="pk-qty${i.qty > 0 && i.qty <= i.low ? " low" : ""}">${i.qty <= 0 ? "Out of stock" : (i.qty <= i.low ? "⚠️ " : "") + i.qty + " in stock"}</span></button>`;
   }).join("") + (list.length > shown.length ? `<div class="pick-more">Showing ${shown.length} of ${list.length} — type to search</div>` : "")
@@ -3356,7 +3378,7 @@ function renderSalesPage() {
     </div>
     ${UI.salesView === "customer" ? `<input id="cust-search-input" type="search" autocomplete="off" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Tafuta mteja…" value="${esc(UI.custSearch || "")}" oninput="UI.custSearch=this.value;softRerender();">` : ""}
     ${UI.salesView === "day" ? (
-      days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : days.map((day) => {
+      days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : days.slice(0, UI.salesDaysShown || 10).map((day) => {
         const list = salesByDay[day];
         const dayTotal = list.reduce((s, x) => s + x.total, 0);
         return `
@@ -3369,9 +3391,9 @@ function renderSalesPage() {
             ${list.map((s) => renderSaleRow(s)).join("")}
           </tbody></table>
         </div>`;
-      }).join("")
+      }).join("") + (days.length > (UI.salesDaysShown || 10) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.salesDaysShown=(UI.salesDaysShown||10)+10;rerender();">⬇️ Onyesha siku 10 zaidi (${days.length - (UI.salesDaysShown || 10)} zimebaki)</button>` : "")
     ) : (
-      customers.length === 0 ? `<p class="empty-note">${custQ ? "Hakuna mteja anayelingana na \"" + esc(UI.custSearch) + "\"." : "No sales recorded yet."}</p>` : customers.map((cust) => {
+      customers.length === 0 ? `<p class="empty-note">${custQ ? "Hakuna mteja anayelingana na \"" + esc(UI.custSearch) + "\"." : "No sales recorded yet."}</p>` : customers.slice(0, UI.custShown || 25).map((cust) => {
         const list = salesByCustomer[cust];
         const custTotal = list.reduce((s, x) => s + x.total, 0);
         return `
@@ -3388,7 +3410,7 @@ function renderSalesPage() {
             ${list.map((s) => renderSaleRow(s)).join("")}
           </tbody></table>
         </div>`;
-      }).join("")
+      }).join("") + (customers.length > (UI.custShown || 25) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.custShown=(UI.custShown||25)+25;rerender();">⬇️ Onyesha wateja 25 zaidi (${customers.length - (UI.custShown || 25)} wamebaki) — au tafuta jina juu</button>` : "")
     )}
   </div>`;
 }
@@ -4500,9 +4522,16 @@ function stockCache() {
 function qtyOf(itemId) { return stockCache().qty[itemId] || 0; }
 function visibleMovements(list) { return list.filter((m) => !m.hidden); }
 
+/* haraka: ramani ya majina badala ya kutafuta orodha nzima kila mara (ripoti zilikuwa nzito kwenye tablet) */
+let _pmap = null, _pmapRef = null, _pmapLen = -1, _imap = null, _imapRef = null, _imapLen = -1;
+function invalidateLookups() { _pmap = null; _imap = null; }
 function productByName(name) {
   const n = (name || "").trim().toLowerCase();
-  return STATE.products.find((p) => !p.deleted && p.name.toLowerCase() === n) || null;
+  if (!_pmap || _pmapRef !== STATE.products || _pmapLen !== STATE.products.length) {
+    _pmap = new Map(); _pmapRef = STATE.products; _pmapLen = STATE.products.length;
+    for (const p of STATE.products) if (!p.deleted && p.name) { const k = p.name.toLowerCase(); if (!_pmap.has(k)) _pmap.set(k, p); }
+  }
+  return _pmap.get(n) || null;
 }
 /* Buying price used for profit/loss: the latest price you entered (when receiving
    from a supplier, or edited on the Products page). Falls back to the average of
@@ -4535,7 +4564,13 @@ function storeMovements(store) {
   const ids = new Set(storeItems(store).map((it) => it.id));
   return STATE.stockMovements.filter((m) => ids.has(m.itemId) && !m.hidden);
 }
-function itemById(id) { return STATE.stockItems.find((it) => it.id === id); }
+function itemById(id) {
+  if (!_imap || _imapRef !== STATE.stockItems || _imapLen !== STATE.stockItems.length) {
+    _imap = new Map(); _imapRef = STATE.stockItems; _imapLen = STATE.stockItems.length;
+    for (const it of STATE.stockItems) if (!_imap.has(it.id)) _imap.set(it.id, it);
+  }
+  return _imap.get(id);
+}
 function lowStockCount(store) {
   return storeItems(store).filter((it) => isLowStock(it) && !isZeroStock(it)).length;
 }
