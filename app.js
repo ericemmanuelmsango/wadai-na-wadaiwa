@@ -2984,6 +2984,26 @@ function dbChart(days) {
   });
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Mauzo kwa siku 14 zilizopita" class="db-chart">${g}</svg>`;
 }
+const DB_ICON = {
+  cart: '<path d="M3 4h2l2.4 11.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.5L21 8H6.2"/><circle cx="10" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/>',
+  trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  cal: '<rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M8 2.5v4M16 2.5v4M3 10h18"/>',
+  box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/>',
+  inbox: '<path d="M12 3v11M8 10l4 4 4-4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+};
+const dbIc = (k, cls) => `<svg class="${cls || "db-ico"}" viewBox="0 0 24 24" aria-hidden="true">${DB_ICON[k]}</svg>`;
+function dbDonut(parts, total, label) {
+  const R = 54, C = 2 * Math.PI * R; let off = 0;
+  const segs = parts.map((p) => { const len = total ? (p.v / total) * C : 0; const el = `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${p.c}" stroke-width="22" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-off}" transform="rotate(-90 70 70)"><title>${esc(p.k)}: ${fmt(p.v)}</title></circle>`; off += len; return el; }).join("");
+  return `<svg viewBox="0 0 140 140" class="db-donut" role="img" aria-label="${esc(label)}"><circle cx="70" cy="70" r="${R}" fill="none" class="db-donut-bg" stroke-width="22"/>${segs}
+    <text x="70" y="67" text-anchor="middle" class="db-donut-v">${dbShort(total)}</text><text x="70" y="85" text-anchor="middle" class="db-donut-l">TSh</text></svg>`;
+}
+function dbTopBars(items) {
+  const max = Math.max(1, ...items.map((x) => x.qty));
+  return `<div class="db-hb">${items.map((x, i) => `<div class="db-hbr"><span class="db-n">${i + 1}</span><div class="db-hbm"><div class="db-hbt"><b title="${esc(x.name)}">${esc(x.name)}</b><span>${x.qty} pcs</span></div>
+    <div class="db-hbbar"><i style="width:${Math.max(4, Math.round((x.qty / max) * 100))}%"></i></div><small>${fmt(x.total)}</small></div></div>`).join("")}</div>`;
+}
 function renderDashboard() {
   const active = STATE.entries.filter((e) => !e.archived);
   const owed = active.filter((e) => e.kind === "owed_to_me"), owe = active.filter((e) => e.kind === "i_owe");
@@ -2997,49 +3017,53 @@ function renderDashboard() {
   const t = todayStr(), yd = dbDay(t, -1), m0 = t.slice(0, 8) + "01", f14 = dbDay(t, -13);
   const lines = reportLines().filter((x) => (x.date || "") >= (m0 < f14 ? m0 : f14));
   const sum = (from, to) => { const L = lines.filter((x) => x.date >= from && x.date <= to); return { total: L.reduce((a, x) => a + (x.total || 0), 0), profit: L.reduce((a, x) => a + repProfit(x), 0), n: L.length }; };
-  const today = sum(t, t), yest = sum(yd, yd), month = sum(m0, t), exp = expensesIn(m0, t).reduce((a, x) => a + Number(x.amount || 0), 0);
+  const today = sum(t, t), yest = sum(yd, yd), month = sum(m0, t);
   const days = Array.from({ length: 14 }, (_, i) => dbDay(f14, i)).map((d) => ({ date: d, ...sum(d, d) }));
   const top = {}; lines.filter((x) => x.date >= m0).forEach((x) => { const k = x.itemName || "—"; (top[k] = top[k] || { name: k, qty: 0, total: 0 }); top[k].qty += x.qty || 0; top[k].total += x.total || 0; });
-  const topItems = Object.values(top).sort((a, b) => b.total - a.total).slice(0, 5), topMax = Math.max(1, ...topItems.map((x) => x.total));
+  const topItems = Object.values(top).sort((a, b) => b.qty - a.qty).slice(0, 5);
+
+  // matumizi ya mwezi huu kwa kundi
+  const exps = expensesIn(m0, t), expTotal = exps.reduce((a, x) => a + Number(x.amount || 0), 0);
+  const byCat = {}; exps.forEach((x) => (byCat[x.category || "Mengineyo"] = (byCat[x.category || "Mengineyo"] || 0) + Number(x.amount || 0)));
+  const PAL = ["#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#ec4899", "#94a3b8"];
+  const expParts = Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v], i) => ({ k, v, c: PAL[i % PAL.length] }));
 
   // stock
   const cap = (st) => storeItems(st).reduce((s, it) => { const q = qtyOf(it.id), a = buyPriceOf(it); return s + (q > 0 && a != null ? q * a : 0); }, 0);
   const capD = cap("dukani"), capG = cap("godown");
   const zero = STATE.stockItems.filter((it) => isZeroStock(it)), low = STATE.stockItems.filter((it) => isLowStock(it) && !isZeroStock(it));
+  const ending = [...zero, ...low];
 
-  const recentPayments = active.flatMap((e) => e.payments.map((p) => ({ ...p, name: e.name, kind: e.kind }))).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 6);
-
-  const hr = new Date().getHours(), greet = hr < 12 ? "Habari za asubuhi" : hr < 16 ? "Habari za mchana" : hr < 19 ? "Habari za jioni" : "Habari za usiku";
   const MON = ["Januari", "Februari", "Machi", "Aprili", "Mei", "Juni", "Julai", "Agosti", "Septemba", "Oktoba", "Novemba", "Desemba"], DOWL = ["Jumapili", "Jumatatu", "Jumanne", "Jumatano", "Alhamisi", "Ijumaa", "Jumamosi"];
-  const dt = new Date(t + "T12:00:00Z");
+  const now = new Date(), dt = new Date(t + "T12:00:00Z");
   const who = (STATE.settings && STATE.settings.ownerName) || "Eric";
-  const lock = `<button class="db-lock" onclick="setPage('reports')">🔒 Fungua kwa password ya ripoti</button>`;
-  const kpi = (label, value, foot, spark, tone) => `<div class="db-card db-kpi ${tone || ""}"><div class="db-kl">${label}</div><div class="db-kv">${value}</div><div class="db-kf">${foot}</div>${spark || ""}</div>`;
-  const money = (n) => `<small>TSh</small>${Math.round(n || 0).toLocaleString("en-US")}`;
+  const lock = `<button class="db-lockw" onclick="setPage('reports')">${dbIc("lock", "db-ico-s")} Fungua kwa password ya ripoti</button>`;
+  const big = (n) => `TSh ${Math.round(n || 0).toLocaleString("en-US")}`;
+  const deltaW = (cur, prev) => { if (!prev && !cur) return "—"; if (!prev) return "▲ mpya leo"; const p = Math.round(((cur - prev) / prev) * 100); return (p >= 0 ? "▲ " : "▼ ") + Math.abs(p) + "% dhidi ya jana"; };
   const margin = month.total ? Math.round((month.profit / month.total) * 100) : 0;
+  const kpi = (tone, icon, label, value, sub) => `<div class="db-kc ${tone}"><div class="db-kt">${dbIc(icon)}</div><div class="db-kb"><div class="db-kl">${label}</div><div class="db-kv">${value}</div><div class="db-ks">${sub}</div></div></div>`;
+  const hidden = `<span class="db-dots">••••••</span>`;
 
   return `<div class="db">
   <section class="db-hero">
-    <div><h1>${greet}${who ? ", " + esc(who) : ""}</h1><p>${DOWL[dt.getUTCDay()]}, ${dt.getUTCDate()} ${MON[dt.getUTCMonth()]} ${dt.getUTCFullYear()} · biashara yako kwa jicho moja</p></div>
-    <div class="db-actions">
-      <button class="db-btn pri" onclick="setPage('sales')">＋ Rekodi mauzo</button>
-      <button class="db-btn" onclick="setPage('owed')">＋ Deni jipya</button>
-      <button class="db-btn" onclick="setPage('mainstore')">📥 Pokea mzigo</button>
-      <button class="db-btn" onclick="setPage('reports')">📊 Ripoti</button>
+    <div><h1>Karibu, ${esc(who)}!</h1><p>Hiki ndicho kinachoendelea kwenye biashara yako leo.</p></div>
+    <div class="db-heror">
+      <div class="db-date">${dbIc("cal", "db-ico-d")}<div><b>${dt.getUTCDate()} ${MON[dt.getUTCMonth()].slice(0, 3)} ${dt.getUTCFullYear()}</b><small>${DOWL[dt.getUTCDay()]}, ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}</small></div></div>
+      <button class="db-btn pri" onclick="setPage('mainstore')">${dbIc("inbox", "db-ico-s")} Pokea mzigo</button>
     </div>
   </section>
 
   <section class="db-kpis">
-    ${fin ? kpi("Mauzo leo", money(today.total), `${dbDelta(today.total, yest.total)}<span>dhidi ya jana · mistari ${today.n}</span>`) : kpi("Mauzo leo", "••••••", lock)}
-    ${fin ? kpi("Faida ghafi leo", money(today.profit), `<span>Mwezi huu: ${fmt(month.profit)}</span>`) : kpi("Faida ghafi leo", "••••••", lock)}
-    ${fin ? kpi("Mauzo mwezi huu", money(month.total), `<span class="db-delta ${margin >= 20 ? "up" : "eq"}">${margin}%</span><span>faida · matumizi ${fmt(exp)}</span>`, dbSpark(days.map((d) => d.total)), "acc") : kpi("Mauzo mwezi huu", "••••••", lock)}
-    ${kpi("Thamani ya stock", money(capD + capG), `<span>Dukani ${dbShort(capD)} · Godown ${dbShort(capG)}</span>`)}
+    ${kpi("blue", "cart", "Mauzo ya leo", fin ? big(today.total) : hidden, fin ? deltaW(today.total, yest.total) : lock)}
+    ${kpi("green", "trend", "Faida ghafi ya leo", fin ? big(today.profit) : hidden, fin ? "Mwezi huu: " + big(month.profit) : lock)}
+    ${kpi("orange", "cal", "Mauzo ya mwezi huu", fin ? big(month.total) : hidden, fin ? margin + "% faida · " + month.n + " mistari" : lock)}
+    ${kpi("purple", "box", "Thamani ya stock", big(capD + capG), "Dukani " + dbShort(capD) + " · Godown " + dbShort(capG))}
   </section>
 
   <section class="db-row">
     <div class="db-card db-span8">
-      <div class="db-h"><h3>Mauzo · siku 14</h3><div class="db-legend"><span><i class="lg1"></i>Mauzo</span>${fin ? `<span><i class="lg2"></i>Faida ghafi</span>` : ""}</div></div>
-      ${fin ? dbChart(days) : `<div class="db-ok neutral" style="display:grid;place-items:center;min-height:180px;text-align:center;gap:8px"><span>Mauzo na faida yamefichwa</span>${lock}</div>`}
+      <div class="db-h"><h3>Mauzo ya siku 14</h3><div class="db-legend"><span><i class="lg1"></i>Mauzo</span>${fin ? `<span><i class="lg2"></i>Faida ghafi</span>` : ""}</div></div>
+      ${fin ? dbChart(days) : `<div class="db-ok neutral db-center"><span>Mauzo na faida yamefichwa</span>${lock}</div>`}
     </div>
     <div class="db-card db-span4">
       <div class="db-h"><h3>Madeni</h3><button class="db-link" onclick="setPage('owed')">Fungua →</button></div>
@@ -3047,7 +3071,7 @@ function renderDashboard() {
         <div><span>Kukusanya</span><b class="pos">${fmt(totalReceivable)}</b><small>wadaiwa ${owed.length}</small></div>
         <div><span>Kulipa</span><b class="neg">${fmt(totalPayable)}</b><small>wadai ${owe.length}</small></div>
       </div>
-      <div class="db-split" role="img" aria-label="Kukusanya dhidi ya kulipa"><i class="pos" style="flex:${Math.max(totalReceivable, 1)}"></i><i class="neg" style="flex:${Math.max(totalPayable, totalReceivable || totalPayable ? totalPayable : 1)}"></i></div>
+      <div class="db-split" role="img" aria-label="Kukusanya dhidi ya kulipa"><i class="pos" style="flex:${totalReceivable || (totalPayable ? 0 : 1)}"></i><i class="neg" style="flex:${totalPayable || (totalReceivable ? 0 : 1)}"></i></div>
       <div class="db-net"><span>Hali halisi</span><b class="${net >= 0 ? "pos" : "neg"}">${net >= 0 ? "+" : ""}${fmt(net)}</b></div>
       <div class="db-mini">
         <div class="${overdue.length ? "bad" : ""}"><b>${overdue.length}</b><span>yamepita tarehe</span></div>
@@ -3057,30 +3081,21 @@ function renderDashboard() {
   </section>
 
   <section class="db-row">
-    <div class="db-card db-span6">
-      <div class="db-h"><h3>Kumbusho za leo</h3><button class="db-link" onclick="setPage('alerts')">Zote →</button></div>
-      ${overdue.length + dueToday.length === 0 ? `<div class="db-ok">✓ Hakuna deni lililofika tarehe leo</div>` : `<div class="db-list">${[...overdue, ...dueToday].slice(0, 6).map((e) => {
-        const pay = e.kind === "i_owe", st = dueStatus(e), ph = String(e.phone || "").replace(/\D/g, ""), wa = ph ? (ph.startsWith("0") ? "255" + ph.slice(1) : ph) : "";
-        return `<div class="db-li"><div class="db-ln"><b>${esc(e.name)}</b><small>${pay ? "Unatakiwa kulipa" : "Anatakiwa kukulipa"} · ${st === "overdue" ? "imepita " + esc(e.dueDate) : "leo"}</small></div>
-          <span class="db-amt ${pay ? "neg" : "pos"}">${fmt(balanceOf(e))}</span>
-          ${!pay && wa ? `<a class="db-wa" href="https://wa.me/${wa}?text=${encodeURIComponent("Habari " + e.name + ", tunakukumbusha kwa heshima deni la " + fmt(balanceOf(e)) + ". Asante kwa ushirikiano wako.")}" target="_blank" rel="noopener" aria-label="Mkumbushe ${esc(e.name)} kwa WhatsApp">WhatsApp</a>` : ""}</div>`; }).join("")}</div>`}
-    </div>
-    <div class="db-card db-span6">
-      <div class="db-h"><h3>Stock inayohitaji hatua</h3><button class="db-link" onclick="setPage('mainstore')">Dukani →</button></div>
-      <div class="db-mini" style="margin-bottom:10px"><div class="${zero.length ? "bad" : ""}"><b>${zero.length}</b><span>zimeisha</span></div><div class="${low.length ? "warn" : ""}"><b>${low.length}</b><span>ziko chini</span></div></div>
-      ${zero.length + low.length === 0 ? `<div class="db-ok">✓ Stock zote ziko juu ya kiwango</div>` : `<div class="db-list">${[...zero, ...low].slice(0, 6).map((it) => `<div class="db-li"><div class="db-ln"><b>${esc(it.name)}</b><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"}${it.category ? " · " + esc(it.category) : ""}</small></div>
-        <span class="db-tag ${isZeroStock(it) ? "bad" : "warn"}">${isZeroStock(it) ? "Imeisha" : qtyOf(it.id) + " zimebaki"}</span></div>`).join("")}</div>`}
-    </div>
-  </section>
-
-  <section class="db-row">
-    <div class="db-card db-span6">
+    <div class="db-card db-span4">
       <div class="db-h"><h3>Zinazouzika zaidi · mwezi huu</h3></div>
-      ${!fin ? `<div class="db-ok neutral">${lock}</div>` : topItems.length ? `<div class="db-list">${topItems.map((x, i) => `<div class="db-rank"><span class="db-n">${i + 1}</span><div class="db-ln"><b>${esc(x.name)}</b><div class="db-meter"><i style="width:${Math.round((x.total / topMax) * 100)}%"></i></div></div><span class="db-amt">${fmt(x.total)}<small>${x.qty} pcs</small></span></div>`).join("")}</div>` : `<div class="db-ok neutral">Bado hakuna mauzo mwezi huu</div>`}
+      ${!fin ? `<div class="db-ok neutral db-center">${lock}</div>` : topItems.length ? dbTopBars(topItems) : `<div class="db-ok neutral">Bado hakuna mauzo mwezi huu</div>`}
     </div>
-    <div class="db-card db-span6">
-      <div class="db-h"><h3>Malipo ya karibuni</h3><button class="db-link" onclick="setPage('reports')">Ripoti →</button></div>
-      ${recentPayments.length === 0 ? `<div class="db-ok neutral">Bado hakuna malipo</div>` : `<div class="db-list">${recentPayments.map((p) => `<div class="db-li"><div class="db-ln"><b>${esc(p.name)}</b><small>${esc(p.date)} · ${p.kind === "owed_to_me" ? "amekulipa" : "umemlipa"}</small></div><span class="db-amt ${p.kind === "owed_to_me" ? "pos" : "neg"}">${p.kind === "owed_to_me" ? "+" : "−"}${fmt(p.amount)}</span></div>`).join("")}</div>`}
+    <div class="db-card db-span4">
+      <div class="db-h"><h3>Matumizi · mwezi huu</h3><button class="db-link" onclick="setPage('expenses')">Fungua →</button></div>
+      ${!fin ? `<div class="db-ok neutral db-center">${lock}</div>` : !expParts.length ? `<div class="db-ok neutral">Hakuna matumizi yaliyorekodiwa mwezi huu</div>` :
+        `<div class="db-donutw">${dbDonut(expParts, expTotal, "Matumizi kwa kundi")}<div class="db-keys">${expParts.slice(0, 6).map((p) => `<div><i style="background:${p.c}"></i><span>${esc(p.k)}</span><b>${expTotal ? Math.round((p.v / expTotal) * 100) : 0}%</b></div>`).join("")}</div></div>
+         <div class="db-net" style="border:0;margin:6px 0 0;padding:0"><span>Jumla ya matumizi</span><b class="neg">${fmt(expTotal)}</b></div>`}
+    </div>
+    <div class="db-card db-span4">
+      <div class="db-h"><h3>Vitu vinavyoisha</h3><button class="db-link" onclick="setPage('mainstore')">Dukani →</button></div>
+      <div class="db-mini" style="margin-bottom:8px"><div class="${zero.length ? "bad" : ""}"><b>${zero.length}</b><span>zimeisha</span></div><div class="${low.length ? "warn" : ""}"><b>${low.length}</b><span>ziko chini</span></div></div>
+      ${!ending.length ? `<div class="db-ok">✓ Stock zote ziko juu ya kiwango</div>` : `<div class="db-list">${ending.slice(0, 6).map((it) => `<div class="db-li"><div class="db-ln"><b>${esc(it.name)}</b><small>${(it.store || "dukani") === "godown" ? "Godown" : "Dukani"}${it.category ? " · " + esc(it.category) : ""}</small></div>
+        <span class="db-tag ${isZeroStock(it) ? "bad" : "warn"}">${isZeroStock(it) ? "Imeisha" : qtyOf(it.id) + " zimebaki"}</span></div>`).join("")}${ending.length > 6 ? `<button class="db-link" style="margin-top:6px" onclick="setPage('alerts')">+ ${ending.length - 6} zaidi →</button>` : ""}</div>`}
     </div>
   </section>
   </div>`;

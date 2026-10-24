@@ -377,6 +377,44 @@ html[data-theme="dark"] .db-btn.pri{background:var(--dbacc)!important;border-col
 @media(max-width:600px){.topbar{padding:0 10px;gap:8px}.search{width:auto;flex:1;min-width:0;padding:8px 12px}.profile{gap:6px}.avatar{display:none}.logout-btn{padding:6px 8px;margin-left:0}}
 @media(max-width:520px){.db-li{flex-wrap:wrap}.db-li .db-ln{flex-basis:100%}.db-hero h1{font-size:21px}}
 .db-meter{height:6px;background:var(--dbp2);border-radius:99px;overflow:hidden;margin-top:5px}.db-meter i{display:block;height:100%;background:var(--dbacc);border-radius:99px}
+
+/* dashboard v2: kadi za rangi (kama picha ya mfano) */
+.db-hero h1{font-size:25px}
+.db-heror{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.db-date{display:flex;align-items:center;gap:10px;color:var(--dbi)}
+.db-date b{display:block;font-size:15px}.db-date small{color:var(--dbm);font-size:12px}
+.db-ico-d{width:30px;height:30px;stroke:var(--dbacc);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.db-ico-s{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
+.db-btn.pri{display:inline-flex;align-items:center;gap:7px;background:#1677ff!important;border-color:#1677ff;color:#fff}
+.db-kc{border-radius:14px;padding:18px 18px 16px;color:#fff;display:flex;gap:14px;align-items:flex-start;min-height:118px;box-shadow:0 6px 16px -8px rgba(15,23,42,.35)}
+.db-kc.blue{background:linear-gradient(135deg,#2f7bff,#1d5fe0)}.db-kc.green{background:linear-gradient(135deg,#1fb36b,#108a50)}
+.db-kc.orange{background:linear-gradient(135deg,#ffa41b,#f08a00)}.db-kc.purple{background:linear-gradient(135deg,#8b5cf6,#6d3fe0)}
+.db-kt{width:52px;height:52px;border-radius:12px;background:rgba(255,255,255,.2);display:grid;place-items:center;flex:none}
+.db-ico{width:28px;height:28px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.db-kb{min-width:0}.db-kc .db-kl{color:rgba(255,255,255,.92);font-size:13px;font-weight:600}
+.db-kc .db-kv{color:#fff;font-size:24px;font-weight:800;letter-spacing:-.02em;margin:4px 0 4px;white-space:nowrap}
+.db-ks{font-size:12.5px;color:rgba(255,255,255,.92);font-weight:600}
+.db-dots{letter-spacing:.12em}
+.db-lockw{display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(255,255,255,.45);background:rgba(255,255,255,.14)!important;color:#fff;font-size:11.5px;font-weight:700;border-radius:8px;padding:4px 9px}
+.db-card .db-lockw{border-color:var(--dbl);background:var(--dbp2)!important;color:var(--dbm)}
+.db-center{display:grid;place-items:center;min-height:170px;text-align:center;gap:8px}
+@media(max-width:480px){.db-kc{min-height:0;padding:14px;gap:10px}.db-kt{width:40px;height:40px}.db-ico{width:22px;height:22px}.db-kc .db-kv{font-size:19px}}
+.db-donutw{display:grid;grid-template-columns:140px 1fr;gap:14px;align-items:center}
+@media(max-width:420px){.db-donutw{grid-template-columns:1fr;justify-items:center}}
+.db-donut{width:140px;height:140px}.db-donut-bg{stroke:var(--dbp2)}
+.db-donut-v{font-size:20px;font-weight:800;fill:var(--dbi)}.db-donut-l{font-size:11px;fill:var(--dbm)}
+.db-keys{display:grid;gap:7px;width:100%}
+.db-keys div{display:grid;grid-template-columns:10px 1fr auto;gap:8px;align-items:center;font-size:13px;color:var(--dbi)}
+.db-keys i{width:10px;height:10px;border-radius:50%}.db-keys b{font-size:12.5px}
+
+.db-hb{display:grid;gap:12px}
+.db-hbr{display:flex;gap:10px;align-items:flex-start}
+.db-hbm{flex:1;min-width:0}
+.db-hbt{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--dbi)}
+.db-hbt b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.db-hbt span{font-weight:700;white-space:nowrap}
+.db-hbbar{height:10px;background:var(--dbp2);border-radius:99px;overflow:hidden;margin:5px 0 2px}.db-hbbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2f7bff,#1d5fe0)}
+.db-hbm small{font-size:11.5px;color:var(--dbm)}
+@media(max-width:600px){.db-kpis{gap:10px}.db-kc{flex-direction:column;gap:8px}.db-kc .db-kv{font-size:18px;white-space:normal}.db-ks{font-size:11.5px}}
 </style>
 </head>
 <body>
@@ -384,7 +422,7 @@ html[data-theme="dark"] .db-btn.pri{background:var(--dbacc)!important;border-col
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="app.js?v=56"></script>
+<script src="app.js?v=57"></script>
 <script>
 /* PRINT FIX: copy the open receipt to #print-root just before printing, so only it prints, once */
 (function () {
