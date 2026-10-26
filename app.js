@@ -3048,7 +3048,7 @@ function renderDashboard() {
   const items = STATE.stockItems;
   const nD = storeItems("dukani").length, nG = storeItems("godown").length;
   const zero = items.filter((it) => isZeroStock(it)), low = items.filter((it) => isLowStock(it) && !isZeroStock(it));
-  const PAL = ["#5B21B6", "#22D3EE", "#0B0B12", "#A78BFA", "#0E7490", "#CBD5E1"];   // Jet Black · Royal Amethyst · Electric Cyan
+  const PAL = ["#2563eb", "#16a34a", "#f59e0b", "#ef4444", "#8b5cf6", "#94a3b8"];
   const cats = {}; items.forEach((it) => { const k = it.category || "Mengineyo"; cats[k] = (cats[k] || 0) + 1; });
   let catList = Object.entries(cats).sort((a, b) => b[1] - a[1]);
   if (catList.length > 6) { const rest = catList.slice(5).reduce((a, x) => a + x[1], 0); catList = [...catList.slice(0, 5), ["Mengineyo", rest]]; }
