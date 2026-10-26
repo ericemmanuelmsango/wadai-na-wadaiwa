@@ -25,6 +25,7 @@ let docRef = null;
 if (CONFIG_IS_SET) {
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
+  try { db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e) {}   // kazi inahifadhiwa kwenye kifaa mpaka ifike cloud
   auth = firebase.auth();
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
@@ -312,7 +313,9 @@ function startSplitListener() {
     const changes = typeof snap.docChanges === "function" ? snap.docChanges() : null;
     if (changes && Object.keys(_DOCS).length) {
       changes.forEach((c) => { const id = c.doc.id; if (c.type === "removed") { delete _DOCS[id]; delete _DOC_KB[id]; } else { _DOCS[id] = c.doc.data(); _DOC_KB[id] = -1; } });
-    } else {
+    }
+    // usalama: nakala ikitofautiana na idadi ya hati halisi, soma zote upya
+    if (!changes || Object.keys(_DOCS).length !== snap.size) {
       Object.keys(_DOCS).forEach((k) => { delete _DOCS[k]; delete _DOC_KB[k]; });
       snap.forEach((d) => { _DOCS[d.id] = d.data(); _DOC_KB[d.id] = -1; });
     }
@@ -3327,7 +3330,9 @@ function renderSalesPage() {
   const salesByCustomer = {};
   salesInStore.forEach((s) => { const c = s.customer && s.customer.trim() ? s.customer.trim() : "Walk-in Customer"; (salesByCustomer[c] = salesByCustomer[c] || []).push(s); });
   const custQ = (UI.custSearch || "").trim().toLowerCase();
-  const customers = Object.keys(salesByCustomer).filter((c) => !custQ || c.toLowerCase().includes(custQ)).sort((a, b) => a.localeCompare(b));
+  // mteja aliyeuziwa karibuni anakaa juu (orodha inaonyesha 25 kwanza — mteja mpya asifichwe chini)
+  const lastAt = (c) => salesByCustomer[c].reduce((m, x) => Math.max(m, x.createdAt || Date.parse((x.date || "1970-01-01") + "T12:00:00")), 0);
+  const customers = Object.keys(salesByCustomer).filter((c) => !custQ || c.toLowerCase().includes(custQ)).sort((a, b) => lastAt(b) - lastAt(a) || a.localeCompare(b));
 
   return `
   <div class="mode-toggle" style="max-width:320px">
