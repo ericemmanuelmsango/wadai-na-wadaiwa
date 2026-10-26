@@ -3048,7 +3048,7 @@ function renderDashboard() {
   const items = STATE.stockItems;
   const nD = storeItems("dukani").length, nG = storeItems("godown").length;
   const zero = items.filter((it) => isZeroStock(it)), low = items.filter((it) => isLowStock(it) && !isZeroStock(it));
-  const PAL = ["#1E88C9", "#FF2E88", "#0B0B0F", "#7CC0EA", "#FF8FBF", "#A9B4C0"];   // Human Next
+  const PAL = ["#B8932F", "#0E0E10", "#E3C46A", "#6B5A3A", "#D9CBA3", "#8C8778"];   // Luxury
   const cats = {}; items.forEach((it) => { const k = it.category || "Mengineyo"; cats[k] = (cats[k] || 0) + 1; });
   let catList = Object.entries(cats).sort((a, b) => b[1] - a[1]);
   if (catList.length > 6) { const rest = catList.slice(5).reduce((a, x) => a + x[1], 0); catList = [...catList.slice(0, 5), ["Mengineyo", rest]]; }
