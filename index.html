@@ -438,6 +438,36 @@ html[data-theme="dark"] .db-btn.pri{background:var(--dbacc)!important;border-col
 @media(max-width:600px){.db-act{flex-wrap:wrap}.db-aw{flex-basis:100%;text-align:left;padding-left:44px;display:flex;gap:8px;align-items:baseline}.db-aw b{display:inline}}
 .db-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#eaf2ff;color:#1d4ed8;border-radius:12px;padding:12px 16px;font-size:13px;font-weight:600}
 html[data-theme="dark"] .db-foot{background:#13233a;color:#93b4ff}
+
+/* ===== E.E.MSANGO: Jet Black + Royal Amethyst + Electric Cyan (60‑30‑10) =====
+   60% mandhari nyepesi ya zambarau · 30% jet/amethyst (pembeni, juu, kadi za takwimu) · 10% cyan (vitufe, ikoni, chati) */
+:root{--navy:#0B0B12;--blue:#5B21B6}
+html:not([data-theme="dark"]) body{background:#F5F3FA}
+.sidebar{background:linear-gradient(180deg,#0B0B12 0%,#140B24 100%)!important}
+.topbar{background:#0B0B12!important;border-bottom:1px solid rgba(91,33,182,.35)}
+.menu li:hover{background:rgba(91,33,182,.35)!important;color:#fff}
+.menu li.active{background:linear-gradient(135deg,#5B21B6,#7C3AED)!important;color:#fff;box-shadow:inset 3px 0 0 #22D3EE}
+.btn-primary{background:#5B21B6!important;color:#fff}.btn-primary:hover{background:#4C1D95!important}
+.search{background:#1A1426!important}
+.db{--dbacc:#0891B2;--dbb1:#DDD3F7;--dbb2:#5B21B6}
+.db-kc{background:linear-gradient(135deg,#0B0B12 0%,#2A1150 100%)!important;box-shadow:0 10px 24px -14px rgba(91,33,182,.8)!important;border:1px solid rgba(124,58,237,.35)}
+.db-kc.green{background:linear-gradient(135deg,#1B0D33 0%,#5B21B6 100%)!important}
+.db-kc.orange{background:linear-gradient(135deg,#0B0B12 0%,#1E1033 100%)!important}
+.db-kc.purple{background:linear-gradient(135deg,#2A1150 0%,#6D28D9 100%)!important}
+.db-kt{background:rgba(34,211,238,.14)!important;box-shadow:inset 0 0 0 1px rgba(34,211,238,.45)}
+.db-ico{stroke:#22D3EE!important}
+.db-kc .db-kv{color:#fff}.db-ks,.db-kc .db-kl{color:#C4B5FD!important}
+.db-btn.pri,.db-ed{background:#22D3EE!important;border-color:#22D3EE!important;color:#0B0B12!important}
+.db-btn.pri .db-ico-s,.db-ed .db-ico-s{stroke:#0B0B12}
+.db-ico-d{stroke:#5B21B6!important}
+.db-hbbar i,.db-meter i{background:linear-gradient(90deg,#5B21B6,#22D3EE)!important}
+.db-link{color:#0891B2!important}
+.db-ai.green{background:#5B21B6!important}.db-ai.blue{background:#0B0B12!important}.db-ai.purple{background:#7C3AED!important}.db-ai.red{background:#DC2626!important}
+.db-aw b{color:#5B21B6!important}
+.db-n{background:#EDE9FE!important;color:#5B21B6!important;border-color:#DDD6FE!important}
+.db-foot{background:linear-gradient(90deg,#0B0B12,#2A1150)!important;color:#A5F3FC!important}
+.db-t th{background:#F3F0FB!important}
+html[data-theme="dark"] .db-t th{background:#16112A!important}
 </style>
 </head>
 <body>
@@ -445,7 +475,7 @@ html[data-theme="dark"] .db-foot{background:#13233a;color:#93b4ff}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="app.js?v=62"></script>
+<script src="app.js?v=63"></script>
 <script>
 /* PRINT FIX: copy the open receipt to #print-root just before printing, so only it prints, once */
 (function () {
