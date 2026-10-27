@@ -4357,12 +4357,16 @@ function renderChargeRow(entry, c) {
             <button class="icon-btn"  onclick="deleteCharge('${entry.id}','${c.id}')">🗑️</button>
           </span>
         </div>
-        ${c.items.map((it) => `
-          <div class="items-summary-row" style="border:none;padding:3px 0">
-            <span>${esc(it.name)}</span>
-            <span class="isr-detail">${it.qty} × ${fmt(it.discountPrice)}${it.discountPercent ? ` (-${it.discountPercent}%)` : ""}</span>
-            <span class="isr-total">${fmt(it.lineTotal)}</span>
+        <div class="chg-items">
+          <div class="chg-row chg-h"><span>Bidhaa</span><span>Idadi × Bei</span><span>Jumla</span></div>
+          ${c.items.map((it) => `
+          <div class="chg-row">
+            <span class="chg-n">${esc(it.name)}</span>
+            <span class="chg-q">${Number(it.qty).toLocaleString("en-US")} × ${fmt(it.discountPrice)}${it.discountPercent ? ` <em>(-${it.discountPercent}%)</em>` : ""}</span>
+            <span class="chg-t">${fmt(it.lineTotal)}</span>
           </div>`).join("")}
+          ${c.items.length > 1 ? `<div class="chg-row chg-sum"><span>Jumla · bidhaa ${c.items.length}</span><span></span><span class="chg-t">${fmt(c.items.reduce((a, it) => a + (+it.lineTotal || 0), 0))}</span></div>` : ""}
+        </div>
       </div>`;
   }
   return `

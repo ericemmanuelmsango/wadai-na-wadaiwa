@@ -162,6 +162,23 @@ input{font-family:inherit;}
 .items-summary-row{display:flex;justify-content:space-between;gap:8px;padding:6px 10px;font-size:12.5px;border-bottom:1px solid var(--line);background:#fff;}
 .items-summary-row:last-child{border-bottom:none;}
 .isr-detail{color:#8290a4;} .isr-total{font-weight:600;}
+/* oda ya bidhaa nyingi (wadai/wadaiwa): jedwali lenye nafasi — jina, idadi × bei, jumla */
+.chg-items{container:chg/inline-size;margin-top:6px;border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13px}
+.chg-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 16px;align-items:center;padding:9px 12px;border-top:1px solid var(--line)}
+.chg-row:first-child{border-top:0}
+.chg-row:nth-child(odd):not(.chg-h):not(.chg-sum){background:rgba(127,140,160,.06)}
+.chg-h{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8290a4;padding-block:7px;background:rgba(127,140,160,.10)}
+.chg-n{font-weight:600;overflow-wrap:anywhere;line-height:1.3}
+.chg-q{color:#8290a4;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}.chg-q em{font-style:normal;color:#d97706}
+.chg-t{font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right;min-width:112px}
+.chg-h span:nth-child(n+2){text-align:right}
+.chg-sum{font-weight:700;background:rgba(127,140,160,.10)}
+@container chg (max-width:520px){
+  .chg-row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:2px 12px;padding:9px 10px}
+  .chg-n{flex:1 0 100%}.chg-q{font-size:12px}.chg-t{min-width:0;margin-left:auto}
+  .chg-h span:nth-child(2),.chg-sum span:nth-child(2){display:none}
+  .chg-sum span:first-child{flex:1}
+}
 .receipt-link-btn{display:flex;align-items:center;gap:5px;background:none;border:none;color:var(--green);font-size:12px;font-weight:600;padding:2px 0 8px;}
 .card-stats{display:flex;gap:16px;margin:12px 0;flex-wrap:wrap;}
 .stat-label{display:block;font-size:10.5px;color:#8290a4;} .stat-val{display:block;font-size:13.5px;font-weight:600;}
@@ -478,7 +495,7 @@ html[data-theme="dark"] .db-t th{background:#1C1A15!important}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
-<script src="app.js?v=68"></script>
+<script src="app.js?v=69"></script>
 <script>
 /* PRINT FIX: copy the open receipt to #print-root just before printing, so only it prints, once */
 (function () {
