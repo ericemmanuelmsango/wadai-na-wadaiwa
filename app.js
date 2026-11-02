@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v40";
+const APP_VERSION = "v41";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -5507,4 +5507,76 @@ setTimeout(() => {
   setTimeout(check, 4000);
   setInterval(check, 5 * 60 * 1000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+})();
+
+/* =====================================================================
+   RASIMU (DRAFT): kazi inayoandikwa haipotei ukirefresh / app ikifungwa
+   Fomu zilizo wazi (wadaiwa/wadai, oda za bidhaa, mauzo, stock, matumizi)
+   zinahifadhiwa kwenye kifaa hiki kila unapoandika, na zinarudishwa
+   ukifungua tena. Rasimu inafutwa yenyewe ukibonyeza Save au Cancel.
+   ===================================================================== */
+(function () {
+  const KEY = "rasimu_v1:" + location.pathname + location.search;
+  const FORMS = ["formOwed", "formOwe", "addChargeTo", "editingChargeId", "saleForm", "editSaleForm", "editingSaleId", "stockForm", "dispatchForm", "expForm"];
+  const CTX = ["page", "expandedOwed", "expandedOwe", "salesStore"];
+  const SKIP = new Set(["id", "mode", "discountMode", "store", "date", "category", "via", "qty", "dueDate", "entryId", "forceNew"]);
+  const has = (o) => {
+    if (o == null) return false;
+    if (typeof o === "string") return o.trim() !== "";
+    if (typeof o === "number") return o !== 0;
+    if (typeof o !== "object") return false;
+    if (Array.isArray(o)) return o.some(has);
+    return Object.entries(o).some(([k, v]) => !SKIP.has(k) && has(v));
+  };
+  const dirty = () => FORMS.some((k) => !/^editing/.test(k) && has(UI[k]));
+  function save() {
+    try {
+      if (!dirty()) { localStorage.removeItem(KEY); return; }
+      const d = { _ts: Date.now() };
+      for (const k of FORMS) if (UI[k] != null) d[k] = UI[k];
+      for (const k of CTX) d["_" + k] = UI[k];
+      localStorage.setItem(KEY, JSON.stringify(d));
+    } catch (e) {}
+  }
+  let t = null;
+  const later = () => { clearTimeout(t); t = setTimeout(save, 300); };
+  function banner(ts) {
+    const old = document.getElementById("rasimu-bar"); if (old) old.remove();
+    const b = document.createElement("div");
+    b.id = "rasimu-bar";
+    b.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;max-width:92vw;background:#111827;color:#fff;border:1px solid #c9a24a;border-radius:12px;padding:10px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;box-shadow:0 8px 30px rgba(0,0,0,.35);font:14px system-ui,sans-serif";
+    const when = new Date(ts).toLocaleString("sw-TZ", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" });
+    b.innerHTML = `<span>📝 Kazi uliyokuwa ukiandika (${when}) imerudishwa - haikuwa imehifadhiwa bado.</span>
+      <button id="rasimu-ok" style="background:#c9a24a;color:#111;border:0;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer">Sawa, endelea</button>
+      <button id="rasimu-del" style="background:transparent;color:#fca5a5;border:1px solid #fca5a5;border-radius:8px;padding:6px 12px;cursor:pointer">Futa rasimu</button>`;
+    document.body.appendChild(b);
+    document.getElementById("rasimu-ok").onclick = () => b.remove();
+    document.getElementById("rasimu-del").onclick = () => {
+      if (!confirm("Futa kazi hii iliyorudishwa? Haitarudi tena.")) return;
+      for (const k of FORMS) UI[k] = null;
+      try { localStorage.removeItem(KEY); } catch (e) {}
+      b.remove(); rerender();
+    };
+  }
+  function restore() {
+    try {
+      const raw = localStorage.getItem(KEY); if (!raw) return;
+      const d = JSON.parse(raw);
+      if (!d._ts || Date.now() - d._ts > 3 * 86400000) { localStorage.removeItem(KEY); return; }
+      for (const k of FORMS) if (d[k] != null) UI[k] = d[k];
+      for (const k of CTX) if (d["_" + k] !== undefined) UI[k] = d["_" + k];
+      rerender(); banner(d._ts);
+    } catch (e) {}
+  }
+  // kila mabadiliko ya skrini na kila herufi inayoandikwa -> hifadhi
+  const _rerender = rerender;
+  rerender = function () { const r = _rerender.apply(this, arguments); save(); return r; };
+  document.addEventListener("input", later, true);
+  document.addEventListener("change", later, true);
+  document.addEventListener("click", later, true);
+  window.addEventListener("pagehide", save);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") save(); });
+  // onyo la browser ukijaribu kurefresh/kufunga wakati kuna kazi haijahifadhiwa
+  window.addEventListener("beforeunload", (e) => { save(); if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
+  restore();
 })();
