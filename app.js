@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v41";
+const APP_VERSION = "v42";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -318,6 +318,13 @@ function startSplitListener() {
     if (!changes || Object.keys(_DOCS).length !== snap.size) {
       Object.keys(_DOCS).forEach((k) => { delete _DOCS[k]; delete _DOC_KB[k]; });
       snap.forEach((d) => { _DOCS[d.id] = d.data(); _DOC_KB[d.id] = -1; });
+    }
+    DEV.load(_DOCS);
+    // badiliko la "vifaa" tu (kila dakika 3) → usijenge data zote upya
+    if (changes && changes.length && changes.every((c) => c.doc.id.startsWith("dev_")) && STATE_LOADED) {
+      UI.sync = { fromCache: snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites, at: new Date() };
+      if (UI.page === "settings") rerender();
+      return;
     }
     const docs = _DOCS;
     const main = docs.data || {};
@@ -3984,6 +3991,8 @@ service cloud.firestore {
     <p style="font-size:11.5px;color:#6b7280;margin-top:10px">💡 If this whole box is missing on one device, that device is opening an OLD copy of the system (old link, old Claude artifact, or browser cache). Use the same website address on both.</p>
   </div>
 
+  ${DEV.panel()}
+
   ${renderSecurityPanel()}
 
   <div class="panel settings-panel" style="margin-top:16px">
@@ -5579,4 +5588,106 @@ setTimeout(() => {
   // onyo la browser ukijaribu kurefresh/kufunga wakati kuna kazi haijahifadhiwa
   window.addEventListener("beforeunload", (e) => { save(); if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
   restore();
+})();
+
+/* =====================================================================
+   📱 VIFAA: kila kifaa kinachotumia mfumo, kiliingia/kilitoka saa ngapi,
+   kiko hewani sasa, ubora wa internet yake, na kama kina data
+   zinazosubiri kutumwa. Pia onyo la "internet dhaifu - usirefreshi".
+   Kila kifaa kinaandika hati moja ndogo (dev_<id>) kila dakika 3.
+   ===================================================================== */
+const DEV = (function () {
+  const APP = "Wadai";
+  let id; try { id = localStorage.getItem("ee_dev_id"); if (!id) { id = "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); localStorage.setItem("ee_dev_id", id); } } catch (e) { id = "dtemp" + Math.random().toString(36).slice(2, 7); }
+  const ua = navigator.userAgent || "";
+  const type = /iPad|Tablet|SM-T|Tab\b/i.test(ua) ? "Tablet" : /Mobi|Android|iPhone/i.test(ua) ? "Simu" : "Kompyuta";
+  const os = /Android/i.test(ua) ? "Android" : /iPhone|iPad|iOS/i.test(ua) ? "iPhone" : /Windows/i.test(ua) ? "Windows" : /Mac OS/i.test(ua) ? "Mac" : /Linux/i.test(ua) ? "Linux" : "";
+  const br = /Edg\//.test(ua) ? "Edge" : /OPR\/|Opera/.test(ua) ? "Opera" : /SamsungBrowser/.test(ua) ? "Samsung" : /Chrome\//.test(ua) ? "Chrome" : /Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "";
+  const st = { list: {}, writeMs: null, lastBeat: 0, hiddenAt: 0 };
+  const SKEY = "ee_dev_sessions:" + APP;
+  let sessions = []; try { sessions = JSON.parse(localStorage.getItem(SKEY) || "[]"); } catch (e) {}
+  function newSession() { sessions.push({ in: Date.now(), out: null }); sessions = sessions.slice(-12); try { localStorage.setItem(SKEY, JSON.stringify(sessions)); } catch (e) {} }
+  function endSession() { const s = sessions[sessions.length - 1]; if (s && !s.out) s.out = Date.now(); try { localStorage.setItem(SKEY, JSON.stringify(sessions)); } catch (e) {} }
+  newSession();
+  const label = () => { try { return localStorage.getItem("ee_dev_label") || ""; } catch (e) { return ""; } };
+  function net() { const c = navigator.connection || {}; return { online: navigator.onLine !== false, type: c.effectiveType || null, rtt: c.rtt != null ? c.rtt : null, down: c.downlink != null ? c.downlink : null, writeMs: st.writeMs }; }
+  function quality(n) {
+    if (!n || n.online === false) return "offline";
+    if (n.type === "slow-2g" || n.type === "2g" || (n.rtt != null && n.rtt > 900) || (n.writeMs != null && n.writeMs > 5000)) return "dhaifu";
+    if (n.type === "3g" || (n.rtt != null && n.rtt > 350) || (n.writeMs != null && n.writeMs > 2000)) return "wastani";
+    return "nzuri";
+  }
+  const ref = () => { const c = colRef; return c ? c.doc("dev_" + id) : null; };
+  function beat(extra) {
+    const r = ref(); if (!r) return;
+    const t0 = Date.now(); st.lastBeat = t0;
+    const doc = { kind: "device", id, app: APP, label: label(), type, os, browser: br, user: "" || "", ver: APP_VERSION, lastSeen: t0, online: true, leftAt: null,
+      sessionStart: (sessions[sessions.length - 1] || {}).in || t0, sessions, net: net(), pending: !!((UI.sync && UI.sync.pending)), ...(extra || {}) };
+    r.set(doc, { merge: true }).then(() => { st.writeMs = Date.now() - t0; }).catch(() => {});
+  }
+  function leave() { endSession(); beat({ online: false, leftAt: Date.now() }); }
+  setInterval(() => { if (document.visibilityState !== "hidden") beat(); }, 180000);
+  (function first(n) { if (ref()) beat(); else if (n < 40) setTimeout(() => first(n + 1), 3000); })(0);
+  window.addEventListener("online", () => beat());
+  window.addEventListener("offline", () => { st.writeMs = null; banner(); });
+  window.addEventListener("pagehide", leave);
+  window.addEventListener("beforeunload", (e) => { if ((UI.sync && UI.sync.pending)) { e.preventDefault(); e.returnValue = ""; } });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") { st.hiddenAt = Date.now(); leave(); }
+    else { if (Date.now() - st.hiddenAt > 10 * 60000) newSession(); else { const s = sessions[sessions.length - 1]; if (s) s.out = null; } beat(); }
+  });
+  function load(docs) { const L = {}; Object.keys(docs).forEach((k) => { if (k.startsWith("dev_") && docs[k] && docs[k].kind === "device") L[docs[k].id || k.slice(4)] = docs[k]; }); st.list = L; }
+
+  // ---------- onyo la internet dhaifu (nje ya #app, halifutwi na render)
+  function banner() {
+    const q = quality(net()); const pend = !!((UI.sync && UI.sync.pending));
+    let b = document.getElementById("dev-net-bar");
+    if (q !== "offline" && q !== "dhaifu" && !(pend && q !== "nzuri")) { if (b) b.remove(); return; }
+    if (!b) { b = document.createElement("div"); b.id = "dev-net-bar"; b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9998;padding:7px 12px;font:13px system-ui,sans-serif;text-align:center;color:#111"; document.body.appendChild(b); }
+    b.style.background = q === "offline" ? "#fca5a5" : "#fde68a";
+    b.textContent = (q === "offline" ? "📵 Hakuna internet" : "📶 Internet dhaifu") + " - USIREFRESH. Kazi yako inahifadhiwa kwenye kifaa hiki na itatumwa yenyewe internet ikirudi." + (pend ? " (⏳ kuna data zinasubiri kutumwa)" : "");
+  }
+  setInterval(banner, 5000); setTimeout(banner, 1500);
+
+  // ---------- jopo la Settings
+  const T = (t) => t ? new Date(t).toLocaleString("sw-TZ", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+  const ago = (t) => { if (!t) return "—"; const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "sasa hivi" : m < 60 ? `dakika ${m} zilizopita` : m < 1440 ? `saa ${Math.round(m / 60)} zilizopita` : `siku ${Math.round(m / 1440)} zilizopita`; };
+  const E = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const QL = { nzuri: "🟢 Nzuri", wastani: "🟡 Wastani", dhaifu: "🔴 Dhaifu", offline: "⚫ Hakuna" };
+  function panel() {
+    const me = id, now = Date.now();
+    const rows = Object.values(st.list).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+    const isOn = (d) => d.online && now - (d.lastSeen || 0) < 7 * 60000;
+    const body = rows.map((d) => {
+      const on = isOn(d), q = on ? quality(d.net) : "offline";
+      const name = d.label || `${d.type || "Kifaa"} · ${d.os || ""} ${d.browser || ""}`.trim();
+      const ses = (d.sessions || []).slice().reverse().slice(0, 8).map((s) => `<div>▸ ${T(s.in)} → ${s.out ? T(s.out) : (on ? "<b>bado yupo</b>" : "—")}</div>`).join("");
+      return `<tr style="border-top:1px solid rgba(127,127,127,.2)">
+        <td style="padding:8px 6px"><b>${E(name)}</b>${d.id === me ? ' <span style="color:#10b981">(hiki)</span>' : ""}<div style="font-size:11px;opacity:.7">${E(d.app)}${d.user ? " · " + E(d.user) : ""} · ${E(d.ver || "")}</div>
+          ${ses ? `<details style="font-size:11px;opacity:.85;margin-top:4px"><summary>Historia ya kuingia/kutoka</summary>${ses}</details>` : ""}</td>
+        <td style="padding:8px 6px;white-space:nowrap">${T(d.sessionStart)}</td>
+        <td style="padding:8px 6px;white-space:nowrap">${on ? "<b style='color:#10b981'>🟢 Yupo sasa</b>" : "⚪ Alitoka " + T(d.leftAt || d.lastSeen)}<div style="font-size:11px;opacity:.7">alionekana ${ago(d.lastSeen)}</div></td>
+        <td style="padding:8px 6px;white-space:nowrap">${on ? QL[q] : "—"}<div style="font-size:11px;opacity:.7">${on ? "" : "mara ya mwisho: "}${d.net && d.net.type ? E(d.net.type) : ""}${d.net && d.net.rtt != null ? " · " + d.net.rtt + "ms" : ""}${d.net && d.net.writeMs != null ? " · kuhifadhi " + (d.net.writeMs / 1000).toFixed(1) + "s" : ""}</div></td>
+        <td style="padding:8px 6px;white-space:nowrap">${d.pending ? "⏳ Zinasubiri kutumwa" : "✓ Zimefika"}</td>
+        <td style="padding:8px 6px">${d.id === me ? `<button class="btn btn-ghost" style="padding:4px 8px;font-size:12px" onclick="DEV.rename()">✏️ Jina</button>` : `<button class="btn btn-ghost" style="padding:4px 8px;font-size:12px" onclick="DEV.remove('${E(d.id)}')">Ondoa</button>`}</td></tr>`;
+    }).join("");
+    const myQ = quality(net());
+    return `<div class="panel settings-panel" style="margin-top:16px"><h3>📱 Vifaa vinavyotumia mfumo</h3>
+      <p style="font-size:12.5px;margin:4px 0 10px">Kifaa hiki: internet ${QL[myQ]}${st.writeMs != null ? " · kuhifadhi kunachukua " + (st.writeMs / 1000).toFixed(1) + "s" : ""} · ${(UI.sync && UI.sync.pending) ? "⏳ kuna data zinasubiri kutumwa" : "✓ data zote zimefika cloud"}
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px;margin-left:6px" onclick="DEV.flush()">🔄 Tuma data sasa</button></p>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="text-align:left;opacity:.7"><th style="padding:6px">Kifaa</th><th style="padding:6px">Aliingia</th><th style="padding:6px">Hali / alitoka</th><th style="padding:6px">Internet</th><th style="padding:6px">Data</th><th></th></tr></thead>
+      <tbody>${body || `<tr><td colspan="6" style="padding:10px;opacity:.7">Bado hakuna taarifa - vifaa vitaonekana baada ya kufunguliwa (dakika 1).</td></tr>`}</tbody></table></div>
+      <p style="font-size:11.5px;opacity:.7;margin-top:8px">"Yupo sasa" = kimeonekana ndani ya dakika 7. Internet: Nzuri / Wastani / Dhaifu kwa kasi halisi ya kuhifadhi data. Kifaa kikiwa na data "zinasubiri", kisizimwe wala kufuta browser mpaka zifike.</p></div>`;
+  }
+  function rename() { const v = prompt("Jina la kifaa hiki (mf. Simu ya Juma, Computer ya duka):", label()); if (v == null) return; try { localStorage.setItem("ee_dev_label", v.trim().slice(0, 40)); } catch (e) {} beat(); setTimeout(() => rerender(), 400); }
+  function remove(did) { if (!confirm("Ondoa kifaa hiki kwenye orodha? (Kikitumika tena kitaonekana tena.)")) return; const c = colRef; if (c) c.doc("dev_" + did).delete().catch(() => {}); }
+  function flush() {
+    const el = document.getElementById("dev-flush-msg");
+    const done = (m) => alert(m);
+    if (navigator.onLine === false) return done("Hakuna internet sasa. Data ziko salama kwenye kifaa hiki na zitatumwa yenyewe internet ikirudi - usifute browser wala app.");
+    try { db.enableNetwork().catch(() => {}); } catch (e) {}
+    const t = setTimeout(() => done("Bado inatuma (internet ni dhaifu). Acha app wazi - itamaliza yenyewe."), 15000);
+    db.waitForPendingWrites().then(() => { clearTimeout(t); beat(); done("✅ Data zote zimefika cloud."); }).catch(() => { clearTimeout(t); done("Imeshindwa kuthibitisha - jaribu tena baadaye."); });
+  }
+  return { id, load, panel, beat, rename, remove, flush, quality, net };
 })();
