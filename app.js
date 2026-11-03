@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v42";
+const APP_VERSION = "v43";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -3405,25 +3405,38 @@ function renderSalesPage() {
         </div>`;
       }).join("") + (days.length > (UI.salesDaysShown || 10) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.salesDaysShown=(UI.salesDaysShown||10)+10;rerender();">⬇️ Onyesha siku 10 zaidi (${days.length - (UI.salesDaysShown || 10)} zimebaki)</button>` : "")
     ) : (
-      customers.length === 0 ? `<p class="empty-note">${custQ ? "Hakuna mteja anayelingana na \"" + esc(UI.custSearch) + "\"." : "No sales recorded yet."}</p>` : customers.slice(0, UI.custShown || 25).map((cust) => {
+      customers.length === 0 ? `<p class="empty-note">${custQ ? "Hakuna mteja anayelingana na \"" + esc(UI.custSearch) + "\"." : "No sales recorded yet."}</p>` : (window.__files = [], customers.slice(0, UI.custShown || 25).map((cust) => {
         const list = salesByCustomer[cust];
         const custTotal = list.reduce((s, x) => s + x.total, 0);
+        // FAILI: kila siku ya mauzo ni faili lake — mauzo ya juzi hayachanganyiki na ya leo
+        const byDay = {}; list.forEach((x) => (byDay[x.date || ""] = byDay[x.date || ""] || []).push(x));
+        const fdays = Object.keys(byDay).sort((a, b) => (a < b ? 1 : -1));
         return `
         <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:10px;overflow:hidden">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--paper-alt)">
-            <strong style="font-size:13px">👤 ${esc(cust)} <span style="font-weight:400;color:#8290a4">(${list.length})</span></strong>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="font-weight:700;color:var(--green)">${fmt(custTotal)}</span>
-              <button class="btn btn-sm btn-ghost" onclick="printCustomerReceipt('${esc(cust)}','${UI.salesStore}')">🖨️ Receipt</button>
-              <button class="btn btn-sm btn-ghost" onclick="archiveCustomerSales('${esc(cust)}','${UI.salesStore}')">🗄️ Move to History</button>
-            </div>
+            <strong style="font-size:13px">👤 ${esc(cust)} <span style="font-weight:400;color:#8290a4">(faili ${fdays.length})</span></strong>
+            <span style="font-weight:700;color:var(--green)">${fmt(custTotal)}</span>
           </div>
-          <table class="recent-table"><tbody>
-            ${list.map((s) => renderSaleRow(s)).join("")}
-          </tbody></table>
+          ${fdays.map((d, n) => {
+            const fl = byDay[d], i = window.__files.push({ cust, store: UI.salesStore, date: d, first: n === 0 }) - 1;
+            const key = cust + "|" + d, open = UI.fileOpen && key in UI.fileOpen ? UI.fileOpen[key] : n === 0;
+            const ft = fl.reduce((s, x) => s + x.total, 0);
+            return `<div style="border-top:1px solid var(--line)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;cursor:pointer" onclick="toggleSaleFile(${i})">
+                <span style="font-size:13px">${open ? "▾" : "▸"} 📁 <b>${esc(rcDate(d))}</b> <span style="color:#8290a4">· bidhaa ${fl.length}</span></span>
+                <span style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
+                  <b style="color:var(--green);margin-right:4px">${fmt(ft)}</b>
+                  <button class="btn btn-sm btn-ghost" onclick="printSaleFile(${i})">🖨️ Print</button>
+                  <button class="btn btn-sm btn-primary" onclick="pdfSaleFile(${i})">📄 PDF</button>
+                  <button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="deleteSaleFile(${i})">🗑️ Futa faili</button>
+                </span>
+              </div>
+              ${open ? `<table class="recent-table"><tbody>${fl.map((x) => renderSaleRow(x)).join("")}</tbody></table>` : ""}
+            </div>`;
+          }).join("")}
         </div>`;
-      }).join("") + (customers.length > (UI.custShown || 25) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.custShown=(UI.custShown||25)+25;rerender();">⬇️ Onyesha wateja 25 zaidi (${customers.length - (UI.custShown || 25)} wamebaki) — au tafuta jina juu</button>` : "")
-    )}
+      }).join("") + (customers.length > (UI.custShown || 25) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.custShown=(UI.custShown||25)+25;rerender();">⬇️ Onyesha wateja 25 zaidi (${customers.length - (UI.custShown || 25)} wamebaki) — au tafuta jina juu</button>` : ""))
+    ) + (UI.salesView === "customer" ? deletedFilesBlock() : "")}
   </div>`;
 }
 function renderSaleRow(s) {
@@ -3527,6 +3540,80 @@ function deleteSale(id) {
   rerender();
 }
 
+/* ---------- FAILI ZA MAUZO (owner's request, 2026-11-03) ----------
+   Kwenye "By Customer", mauzo ya mteja yanakaa kwenye faili moja kwa kila siku (tarehe ya mauzo).
+   Kila faili lina Print, PDF na "Futa faili". Kufuta faili kunaliondoa kwenye orodha ya Sales tu:
+   rekodi zinabaki (ripoti na faida haziharibiki) na stock haiguswi; linaweza kurudishwa. */
+const fileCust = (s) => (s.customer && s.customer.trim() ? s.customer.trim() : "");
+function saleFileList(f, deleted) {
+  const target = f.cust === "Walk-in Customer" ? "" : f.cust;
+  return STATE.sales.filter((s) => (s.store || "dukani") === f.store && (s.date || "") === f.date && fileCust(s) === target && (deleted ? s.archived && s.fileDeleted : !s.archived));
+}
+function toggleSaleFile(i) {
+  const f = (window.__files || [])[i]; if (!f) return;
+  const key = f.cust + "|" + f.date; UI.fileOpen = UI.fileOpen || {};
+  UI.fileOpen[key] = !(key in UI.fileOpen ? UI.fileOpen[key] : f.first); rerender();
+}
+function printSaleFile(i) {
+  const f = (window.__files || [])[i]; if (!f) return;
+  const items = saleFileList(f, f.deleted); if (!items.length) return;
+  UI.customerReceipt = { customer: f.cust, store: f.store, items }; rerender();
+}
+async function pdfSaleFile(i) {
+  const f = (window.__files || [])[i]; if (!f) return;
+  const items = saleFileList(f, f.deleted); if (!items.length) return;
+  try {
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js");
+  } catch (e) { alert("Imeshindikana kupakua PDF — angalia internet kisha jaribu tena."); return; }
+  const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+  const sh = rcShop(), tz = (n) => Math.round(n).toLocaleString("en-US");
+  const total = items.reduce((a, x) => a + x.total, 0);
+  doc.setFontSize(16); doc.setFont(undefined, "bold"); doc.text(sh.name || "", 105, 18, { align: "center" }); doc.setFont(undefined, "normal");
+  doc.setFontSize(9.5); let y = 24;
+  [sh.line, sh.phone ? "Simu: " + sh.phone : "", sh.address].filter(Boolean).forEach((t) => { doc.text(t, 105, y, { align: "center" }); y += 5; });
+  doc.setDrawColor(200); doc.line(14, y, 196, y); y += 8;
+  doc.setFontSize(12); doc.setFont(undefined, "bold"); doc.text("ANKARA YA MAUZO", 14, y); doc.setFont(undefined, "normal");
+  doc.setFontSize(10);
+  doc.text("Mteja: " + f.cust, 14, y + 7); doc.text("Tarehe: " + rcDate(f.date), 196, y + 7, { align: "right" });
+  doc.text((f.store === "godown" ? "Godown" : "Dukani"), 196, y + 13, { align: "right" });
+  doc.autoTable({ startY: y + 18, theme: "grid", headStyles: { fillColor: [15, 31, 61], textColor: 255, fontStyle: "bold" }, footStyles: { fillColor: [235, 239, 245], textColor: 20, fontStyle: "bold" },
+    columnStyles: { 0: { cellWidth: 10 }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
+    didParseCell: (d) => { if ((d.section === "head" || d.section === "foot") && d.column.index >= 2) d.cell.styles.halign = "right"; },
+    head: [["#", "Bidhaa", "Idadi", "Bei (TSh)", "Jumla (TSh)"]],
+    body: items.map((x, n) => [n + 1, x.itemName, x.qty, tz(x.sellPrice), tz(x.total)]),
+    foot: [["", "JUMLA", items.reduce((a, x) => a + x.qty, 0), "", "TSh " + tz(total)]] });
+  const fy = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 60) + 10;
+  doc.setFontSize(9); doc.setTextColor(110); doc.text("Asante kwa kununua kwetu.   Imetolewa: " + new Date().toLocaleString("en-GB"), 14, fy); doc.setTextColor(0);
+  const safe = f.cust.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "Mteja";
+  doc.save("Mauzo-" + safe + "-" + f.date + ".pdf");
+}
+function deleteSaleFile(i) {
+  const f = (window.__files || [])[i]; if (!f) return;
+  const list = saleFileList(f); if (!list.length) return;
+  if (!confirm(`Futa faili la ${f.cust} la ${rcDate(f.date)} (bidhaa ${list.length})?\n\nLitaondoka kwenye orodha ya Sales. Ripoti na faida hazibadiliki, na stock haiguswi.\nUkikosea, unaweza kulirudisha chini ya ukurasa (🗑️ Faili zilizofutwa).`)) return;
+  const ids = new Set(list.map((x) => x.id));
+  STATE.sales = STATE.sales.map((s) => (ids.has(s.id) ? { ...s, archived: true, archivedDate: todayStr(), fileDeleted: true, fileDeletedAt: Date.now() } : s));
+  saveSales(); rerender();
+}
+function restoreSaleFile(i) {
+  const f = (window.__dfiles || [])[i]; if (!f) return;
+  const ids = new Set(saleFileList(f, true).map((x) => x.id));
+  STATE.sales = STATE.sales.map((s) => { if (!ids.has(s.id)) return s; const c = { ...s }; delete c.archived; delete c.archivedDate; delete c.fileDeleted; delete c.fileDeletedAt; return c; });
+  saveSales(); rerender();
+}
+function deletedFilesBlock() {
+  const del = STATE.sales.filter((s) => (s.store || "dukani") === UI.salesStore && s.archived && s.fileDeleted);
+  if (!del.length) return "";
+  const g = {}; del.forEach((s) => { const k = (fileCust(s) || "Walk-in Customer") + "|" + (s.date || ""); (g[k] = g[k] || []).push(s); });
+  const keys = Object.keys(g).sort((a, b) => Math.max(...g[b].map((x) => x.fileDeletedAt || 0)) - Math.max(...g[a].map((x) => x.fileDeletedAt || 0)));
+  window.__dfiles = keys.map((k) => { const [cust, date] = k.split("|"); return { cust, store: UI.salesStore, date, deleted: true }; });
+  return `<div style="margin-top:12px"><button class="btn btn-sm btn-ghost" onclick="UI.showDelFiles=!UI.showDelFiles;rerender();">🗑️ Faili zilizofutwa (${keys.length}) ${UI.showDelFiles ? "▾" : "▸"}</button>
+    ${UI.showDelFiles ? keys.slice(0, 50).map((k, i) => { const [cust, date] = k.split("|"); const t = g[k].reduce((a, x) => a + x.total, 0);
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13px">
+        <span>📁 ${esc(cust)} · ${esc(rcDate(date))} <span style="color:#8290a4">· bidhaa ${g[k].length} · ${fmt(t)}</span></span>
+        <button class="btn btn-sm btn-primary" onclick="restoreSaleFile(${i})">↩️ Rudisha</button></div>`; }).join("") : ""}</div>`;
+}
 function archiveCustomerSales(customer, store) {
   if (!confirm(`Move all of ${customer}'s sales to history? This will NOT affect stock — the sale already happened.`)) return;
   const target = customer === "Walk-in Customer" ? "" : customer;
@@ -3661,7 +3748,7 @@ function renderReports() {
   <div class="panel" id="sales-report-print" style="margin-top:16px">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <h3 style="margin:0">💰 Sales Report &amp; Profit / Loss</h3>
-      <span class="no-print" style="display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="UI.pdfOpen=!UI.pdfOpen;rerender();">📄 PDF</button><button class="btn btn-sm btn-ghost" onclick="printReport()">🖨️ Print</button></span>
+      <span class="no-print" style="display:flex;gap:6px"><button class="btn btn-sm btn-ghost" onclick="printReport()">🖨️ Print</button></span>
     </div>
     <div class="discount-mode-toggle no-print" style="margin:10px 0">
       <button class="chip-btn" onclick="setPLPreset(1)">Today</button>
@@ -3683,7 +3770,6 @@ function renderReports() {
     </div>
     ${posRevenue > 0 ? `<p style="font-size:11.5px;color:#6b7280;margin:-6px 0 10px">POS sales in this range: <b>${fmt(posRevenue)}</b> (shown in the POS reports).</p>` : ""}
     ${unknownCostCount > 0 ? `<p style="font-size:11.5px;color:#b8862f;margin-bottom:10px">⚠️ ${unknownCostCount} sale(s) in this range have no known buying price (item was never received with a price in Main Store), so cost/profit may be understated.</p>` : ""}
-    ${UI.pdfOpen ? pdfPanel() : ""}
     ${plViewTabs()}${plHistoryBar(showHist)}
     ${(UI.plView || "day") === "day" ? plGroupTable(salesInRange, (x) => x.date, "Tarehe", effBuy, true, "d", showHist)
       : UI.plView === "customer" ? plGroupTable(salesInRange, repCust, "Mteja", effBuy, false, "c", showHist)
