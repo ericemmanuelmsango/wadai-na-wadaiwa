@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v43";
+const APP_VERSION = "v44";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -3389,21 +3389,43 @@ function renderSalesPage() {
       </div>
     </div>
     ${UI.salesView === "customer" ? `<input id="cust-search-input" type="search" autocomplete="off" class="field field-sm" style="max-width:280px;margin-bottom:12px" placeholder="🔍 Tafuta mteja…" value="${esc(UI.custSearch || "")}" oninput="UI.custSearch=this.value;softRerender();">` : ""}
-    ${UI.salesView === "day" ? (
-      days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : days.slice(0, UI.salesDaysShown || 10).map((day) => {
+    ${(UI.salesView === "day" ? (
+      days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : (window.__files = [], days.slice(0, UI.salesDaysShown || 10).map((day, dn) => {
         const list = salesByDay[day];
         const dayTotal = list.reduce((s, x) => s + x.total, 0);
+        // FOLDA YA SIKU: wateja wote wa tarehe hii, kila mteja faili lake
+        const byC = {}; list.forEach((x) => { const c = fileCust(x) || "Walk-in Customer"; (byC[c] = byC[c] || []).push(x); });
+        const cs = Object.keys(byC).sort((a, b) => Math.max(...byC[b].map((x) => x.createdAt || 0)) - Math.max(...byC[a].map((x) => x.createdAt || 0)));
+        const di = window.__files.push({ date: day, store: UI.salesStore, first: dn === 0 }) - 1;
+        const dkey = "D|" + day, dopen = UI.fileOpen && dkey in UI.fileOpen ? UI.fileOpen[dkey] : dn === 0;
         return `
-        <div style="margin-bottom:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 4px;border-bottom:2px solid var(--line)">
-            <strong style="font-size:13px">${day}</strong>
-            <span style="font-size:12.5px;font-weight:700;color:var(--green)">${fmt(dayTotal)}</span>
+        <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:10px;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;background:var(--paper-alt);cursor:pointer" onclick="toggleSaleFile(${di},'D')">
+            <strong style="font-size:13.5px">${dopen ? "▾" : "▸"} 🗂️ ${esc(rcDate(day))} <span style="font-weight:400;color:#8290a4">· wateja ${cs.length} · bidhaa ${list.length}</span></strong>
+            <span style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
+              <b style="color:var(--green);margin-right:4px">${fmt(dayTotal)}</b>
+              <button class="btn btn-sm btn-primary" onclick="pdfSaleFile(${di})">📄 PDF ya siku</button>
+              <button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="deleteSaleFile(${di})">🗑️ Futa siku nzima</button>
+            </span>
           </div>
-          <table class="recent-table"><tbody>
-            ${list.map((s) => renderSaleRow(s)).join("")}
-          </tbody></table>
+          ${dopen ? cs.map((c) => {
+            const fl = byC[c], i = window.__files.push({ cust: c, date: day, store: UI.salesStore, first: false }) - 1;
+            const key = c + "|" + day, open = UI.fileOpen && key in UI.fileOpen ? UI.fileOpen[key] : false;
+            return `<div style="border-top:1px solid var(--line)">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px 8px 24px;cursor:pointer" onclick="toggleSaleFile(${i})">
+                <span style="font-size:13px">${open ? "▾" : "▸"} 📁 👤 <b>${esc(c)}</b> <span style="color:#8290a4">· bidhaa ${fl.length}</span></span>
+                <span style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
+                  <b style="color:var(--green);margin-right:4px">${fmt(fl.reduce((a, x) => a + x.total, 0))}</b>
+                  <button class="btn btn-sm btn-ghost" onclick="printSaleFile(${i})">🖨️ Print</button>
+                  <button class="btn btn-sm btn-ghost" onclick="pdfSaleFile(${i})">📄 PDF</button>
+                  <button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="deleteSaleFile(${i})">🗑️</button>
+                </span>
+              </div>
+              ${open ? `<table class="recent-table"><tbody>${fl.map((x) => renderSaleRow(x)).join("")}</tbody></table>` : ""}
+            </div>`;
+          }).join("") : ""}
         </div>`;
-      }).join("") + (days.length > (UI.salesDaysShown || 10) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.salesDaysShown=(UI.salesDaysShown||10)+10;rerender();">⬇️ Onyesha siku 10 zaidi (${days.length - (UI.salesDaysShown || 10)} zimebaki)</button>` : "")
+      }).join("")) + (days.length > (UI.salesDaysShown || 10) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.salesDaysShown=(UI.salesDaysShown||10)+10;rerender();">⬇️ Onyesha siku 10 zaidi (${days.length - (UI.salesDaysShown || 10)} zimebaki)</button>` : "")
     ) : (
       customers.length === 0 ? `<p class="empty-note">${custQ ? "Hakuna mteja anayelingana na \"" + esc(UI.custSearch) + "\"." : "No sales recorded yet."}</p>` : (window.__files = [], customers.slice(0, UI.custShown || 25).map((cust) => {
         const list = salesByCustomer[cust];
@@ -3436,7 +3458,7 @@ function renderSalesPage() {
           }).join("")}
         </div>`;
       }).join("") + (customers.length > (UI.custShown || 25) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.custShown=(UI.custShown||25)+25;rerender();">⬇️ Onyesha wateja 25 zaidi (${customers.length - (UI.custShown || 25)} wamebaki) — au tafuta jina juu</button>` : ""))
-    ) + (UI.salesView === "customer" ? deletedFilesBlock() : "")}
+    )) + deletedFilesBlock()}
   </div>`;
 }
 function renderSaleRow(s) {
@@ -3547,11 +3569,11 @@ function deleteSale(id) {
 const fileCust = (s) => (s.customer && s.customer.trim() ? s.customer.trim() : "");
 function saleFileList(f, deleted) {
   const target = f.cust === "Walk-in Customer" ? "" : f.cust;
-  return STATE.sales.filter((s) => (s.store || "dukani") === f.store && (s.date || "") === f.date && fileCust(s) === target && (deleted ? s.archived && s.fileDeleted : !s.archived));
+  return STATE.sales.filter((s) => (s.store || "dukani") === f.store && (s.date || "") === f.date && (f.cust == null || fileCust(s) === target) && (deleted ? s.archived && s.fileDeleted : !s.archived));
 }
-function toggleSaleFile(i) {
+function toggleSaleFile(i, kind) {
   const f = (window.__files || [])[i]; if (!f) return;
-  const key = f.cust + "|" + f.date; UI.fileOpen = UI.fileOpen || {};
+  const key = kind === "D" ? "D|" + f.date : f.cust + "|" + f.date; UI.fileOpen = UI.fileOpen || {};
   UI.fileOpen[key] = !(key in UI.fileOpen ? UI.fileOpen[key] : f.first); rerender();
 }
 function printSaleFile(i) {
@@ -3568,30 +3590,47 @@ async function pdfSaleFile(i) {
   } catch (e) { alert("Imeshindikana kupakua PDF — angalia internet kisha jaribu tena."); return; }
   const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
   const sh = rcShop(), tz = (n) => Math.round(n).toLocaleString("en-US");
-  const total = items.reduce((a, x) => a + x.total, 0);
+  const whole = f.cust == null, total = items.reduce((a, x) => a + x.total, 0);
   doc.setFontSize(16); doc.setFont(undefined, "bold"); doc.text(sh.name || "", 105, 18, { align: "center" }); doc.setFont(undefined, "normal");
   doc.setFontSize(9.5); let y = 24;
   [sh.line, sh.phone ? "Simu: " + sh.phone : "", sh.address].filter(Boolean).forEach((t) => { doc.text(t, 105, y, { align: "center" }); y += 5; });
   doc.setDrawColor(200); doc.line(14, y, 196, y); y += 8;
-  doc.setFontSize(12); doc.setFont(undefined, "bold"); doc.text("ANKARA YA MAUZO", 14, y); doc.setFont(undefined, "normal");
+  doc.setFontSize(12); doc.setFont(undefined, "bold"); doc.text(whole ? "MAUZO YA SIKU" : "ANKARA YA MAUZO", 14, y); doc.setFont(undefined, "normal");
   doc.setFontSize(10);
-  doc.text("Mteja: " + f.cust, 14, y + 7); doc.text("Tarehe: " + rcDate(f.date), 196, y + 7, { align: "right" });
+  doc.text(whole ? "Wateja: " + new Set(items.map((x) => fileCust(x) || "Walk-in Customer")).size + "   |   Jumla: TSh " + tz(total) : "Mteja: " + f.cust, 14, y + 7);
+  doc.text("Tarehe: " + rcDate(f.date), 196, y + 7, { align: "right" });
   doc.text((f.store === "godown" ? "Godown" : "Dukani"), 196, y + 13, { align: "right" });
-  doc.autoTable({ startY: y + 18, theme: "grid", headStyles: { fillColor: [15, 31, 61], textColor: 255, fontStyle: "bold" }, footStyles: { fillColor: [235, 239, 245], textColor: 20, fontStyle: "bold" },
+  const head = { fillColor: [15, 31, 61], textColor: 255, fontStyle: "bold" }, foot = { fillColor: [235, 239, 245], textColor: 20, fontStyle: "bold" };
+  const table = (startY, list, label) => doc.autoTable({ startY, theme: "grid", headStyles: head, footStyles: foot,
     columnStyles: { 0: { cellWidth: 10 }, 2: { halign: "right" }, 3: { halign: "right" }, 4: { halign: "right" } },
     didParseCell: (d) => { if ((d.section === "head" || d.section === "foot") && d.column.index >= 2) d.cell.styles.halign = "right"; },
     head: [["#", "Bidhaa", "Idadi", "Bei (TSh)", "Jumla (TSh)"]],
-    body: items.map((x, n) => [n + 1, x.itemName, x.qty, tz(x.sellPrice), tz(x.total)]),
-    foot: [["", "JUMLA", items.reduce((a, x) => a + x.qty, 0), "", "TSh " + tz(total)]] });
-  const fy = (doc.lastAutoTable ? doc.lastAutoTable.finalY : 60) + 10;
-  doc.setFontSize(9); doc.setTextColor(110); doc.text("Asante kwa kununua kwetu.   Imetolewa: " + new Date().toLocaleString("en-GB"), 14, fy); doc.setTextColor(0);
-  const safe = f.cust.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "Mteja";
+    body: list.map((x, n) => [n + 1, x.itemName, x.qty, tz(x.sellPrice), tz(x.total)]),
+    foot: [["", label, list.reduce((a, x) => a + x.qty, 0), "", "TSh " + tz(list.reduce((a, x) => a + x.total, 0))]] });
+  const below = (g) => (doc.lastAutoTable ? doc.lastAutoTable.finalY : 60) + g;
+  if (!whole) table(y + 18, items, "JUMLA");
+  else {
+    const byC = {}; items.forEach((x) => { const c = fileCust(x) || "Walk-in Customer"; (byC[c] = byC[c] || []).push(x); });
+    let cy = y + 20;
+    Object.keys(byC).sort((p, q) => p.localeCompare(q)).forEach((c) => {
+      if (cy > 265) { doc.addPage(); cy = 18; }
+      doc.setFontSize(11); doc.setFont(undefined, "bold"); doc.text("Mteja: " + c, 14, cy); doc.setFont(undefined, "normal");
+      table(cy + 2, byC[c], "Jumla ya " + c); cy = below(10);
+    });
+    if (cy > 275) { doc.addPage(); cy = 18; }
+    doc.setFontSize(12); doc.setFont(undefined, "bold"); doc.text("JUMLA YA SIKU: TSh " + tz(total), 196, cy, { align: "right" }); doc.setFont(undefined, "normal");
+  }
+  let fy = below(whole ? 18 : 10); if (fy > 285) { doc.addPage(); fy = 18; }
+  doc.setFontSize(9); doc.setTextColor(110); doc.text("Imetolewa: " + new Date().toLocaleString("en-GB"), 14, fy); doc.setTextColor(0);
+  const n = doc.getNumberOfPages(); for (let k = 1; k <= n; k++) { doc.setPage(k); doc.setFontSize(8); doc.setTextColor(150); doc.text("Ukurasa " + k + " / " + n, 196, 290, { align: "right" }); doc.setTextColor(0); }
+  const safe = whole ? "Siku" : (f.cust.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "Mteja");
   doc.save("Mauzo-" + safe + "-" + f.date + ".pdf");
 }
 function deleteSaleFile(i) {
   const f = (window.__files || [])[i]; if (!f) return;
   const list = saleFileList(f); if (!list.length) return;
-  if (!confirm(`Futa faili la ${f.cust} la ${rcDate(f.date)} (bidhaa ${list.length})?\n\nLitaondoka kwenye orodha ya Sales. Ripoti na faida hazibadiliki, na stock haiguswi.\nUkikosea, unaweza kulirudisha chini ya ukurasa (🗑️ Faili zilizofutwa).`)) return;
+  const what = f.cust == null ? `mauzo YOTE ya siku ${rcDate(f.date)} (wateja ${new Set(list.map((x) => fileCust(x))).size}, bidhaa ${list.length})` : `faili la ${f.cust} la ${rcDate(f.date)} (bidhaa ${list.length})`;
+  if (!confirm(`Futa ${what}?\n\nYataondoka kwenye orodha ya Sales. Ripoti na faida hazibadiliki, na stock haiguswi.\nUkikosea, unaweza kuyarudisha chini ya ukurasa (🗑️ Faili zilizofutwa).`)) return;
   const ids = new Set(list.map((x) => x.id));
   STATE.sales = STATE.sales.map((s) => (ids.has(s.id) ? { ...s, archived: true, archivedDate: todayStr(), fileDeleted: true, fileDeletedAt: Date.now() } : s));
   saveSales(); rerender();
@@ -3605,14 +3644,19 @@ function restoreSaleFile(i) {
 function deletedFilesBlock() {
   const del = STATE.sales.filter((s) => (s.store || "dukani") === UI.salesStore && s.archived && s.fileDeleted);
   if (!del.length) return "";
-  const g = {}; del.forEach((s) => { const k = (fileCust(s) || "Walk-in Customer") + "|" + (s.date || ""); (g[k] = g[k] || []).push(s); });
-  const keys = Object.keys(g).sort((a, b) => Math.max(...g[b].map((x) => x.fileDeletedAt || 0)) - Math.max(...g[a].map((x) => x.fileDeletedAt || 0)));
-  window.__dfiles = keys.map((k) => { const [cust, date] = k.split("|"); return { cust, store: UI.salesStore, date, deleted: true }; });
-  return `<div style="margin-top:12px"><button class="btn btn-sm btn-ghost" onclick="UI.showDelFiles=!UI.showDelFiles;rerender();">🗑️ Faili zilizofutwa (${keys.length}) ${UI.showDelFiles ? "▾" : "▸"}</button>
-    ${UI.showDelFiles ? keys.slice(0, 50).map((k, i) => { const [cust, date] = k.split("|"); const t = g[k].reduce((a, x) => a + x.total, 0);
-      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13px">
-        <span>📁 ${esc(cust)} · ${esc(rcDate(date))} <span style="color:#8290a4">· bidhaa ${g[k].length} · ${fmt(t)}</span></span>
-        <button class="btn btn-sm btn-primary" onclick="restoreSaleFile(${i})">↩️ Rudisha</button></div>`; }).join("") : ""}</div>`;
+  const g = {}; del.forEach((s) => { const d = s.date || ""; const c = fileCust(s) || "Walk-in Customer"; ((g[d] = g[d] || {})[c] = g[d][c] || []).push(s); });
+  const days = Object.keys(g).sort((a, b) => (a < b ? 1 : -1));
+  window.__dfiles = [];
+  const nFiles = days.reduce((a, d) => a + Object.keys(g[d]).length, 0);
+  return `<div style="margin-top:12px"><button class="btn btn-sm btn-ghost" onclick="UI.showDelFiles=!UI.showDelFiles;rerender();">🗑️ Faili zilizofutwa (${nFiles}) ${UI.showDelFiles ? "▾" : "▸"}</button>
+    ${UI.showDelFiles ? days.slice(0, 30).map((d) => { const di = window.__dfiles.push({ date: d, store: UI.salesStore, deleted: true }) - 1;
+      return `<div style="border:1px solid var(--line);border-radius:8px;margin-top:8px;overflow:hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;background:var(--paper-alt);font-size:13px"><b>🗂️ ${esc(rcDate(d))}</b>
+          <button class="btn btn-sm btn-primary" onclick="restoreSaleFile(${di})">↩️ Rudisha siku nzima</button></div>
+        ${Object.keys(g[d]).map((c) => { const i = window.__dfiles.push({ cust: c, date: d, store: UI.salesStore, deleted: true }) - 1; const t = g[d][c].reduce((a, x) => a + x.total, 0);
+          return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px 7px 22px;border-top:1px solid var(--line);font-size:13px">
+          <span>📁 ${esc(c)} <span style="color:#8290a4">· bidhaa ${g[d][c].length} · ${fmt(t)}</span></span>
+          <button class="btn btn-sm btn-ghost" onclick="restoreSaleFile(${i})">↩️ Rudisha</button></div>`; }).join("")}</div>`; }).join("") : ""}</div>`;
 }
 function archiveCustomerSales(customer, store) {
   if (!confirm(`Move all of ${customer}'s sales to history? This will NOT affect stock — the sale already happened.`)) return;
