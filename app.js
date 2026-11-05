@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v45";
+const APP_VERSION = "v46";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -85,7 +85,8 @@ let charts = {};
 
 /* ---------- helpers ---------- */
 function fmt(n) { return "TSh " + Math.round(n || 0).toLocaleString("en-US"); }
-function todayStr() { return new Date().toISOString().slice(0, 10); }
+// tarehe ya LEO kwa saa ya kifaa (Tanzania), si UTC — kabla ya saa 3 usiku ilikuwa inatoa tarehe ya jana
+function todayStr() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 function getCharges(e) {
   if (e.charges && e.charges.length) return e.charges;
   // legacy entries stored amount/items/note at top level — treat as one charge
@@ -3214,7 +3215,7 @@ function avgBuyPrice(itemId) {
 }
 
 function startNewSale() {
-  UI.saleForm = { store: UI.salesStore || "dukani", customer: "", date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
+  UI.saleForm = { store: UI.salesStore || "dukani", customer: "", date: todayStr(), _day: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
   rerender();
 }
 function setSaleField(field, value) {
@@ -3327,8 +3328,11 @@ function pickSaleItem(id) {
 function renderSalesPage() {
   if (!UI.salesStore) UI.salesStore = "dukani";
   if (!UI.salesView) UI.salesView = "day";
-  if (!UI.saleForm) UI.saleForm = { store: UI.salesStore, customer: "", date: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
+  if (!UI.saleForm) UI.saleForm = { store: UI.salesStore, customer: "", date: todayStr(), _day: todayStr(), rows: [{ id: uid(), itemName: "", price: "", qty: "" }] };
   const f = UI.saleForm;
+  // Fomu iliyofunguliwa jana (tablet iliachwa wazi usiku, au rasimu iliyorudishwa) isiandike mauzo ya leo kwa tarehe ya jana —
+  // hiyo ndiyo ilikuwa inafanya mauzo mapya kuingia kwenye faili la zamani la mteja.
+  if (f._day !== todayStr()) { f.date = todayStr(); f._day = todayStr(); }
   const grandTotal = f.rows.reduce((s, r) => s + (Number(r.price) || 0) * (Number(r.qty) || 0), 0);
   const salesInStore = STATE.sales.filter((s) => (s.store || "dukani") === UI.salesStore && !s.archived);
   const salesByDay = {};
@@ -3517,6 +3521,8 @@ function saveEditedSale(id) {
 }
 function submitSale() {
   const f = UI.saleForm;
+  if (!f) return;
+  if (f._day !== todayStr()) { f.date = todayStr(); f._day = todayStr(); }   // fomu ya jana -> mauzo ni ya leo
   UI.saleMsg = null;
   const validRows = f.rows.filter((r) => r.itemName.trim() && Number(r.price) > 0 && Number(r.qty) > 0);
   if (validRows.length === 0) { UI.saleMsg = { ok: false, text: "Add at least one item with a price and quantity." }; return rerender(); }
@@ -5776,7 +5782,7 @@ setTimeout(() => {
   const KEY = "rasimu_v1:" + location.pathname + location.search;
   const FORMS = ["formOwed", "formOwe", "addChargeTo", "editingChargeId", "saleForm", "editSaleForm", "editingSaleId", "stockForm", "dispatchForm", "expForm"];
   const CTX = ["page", "expandedOwed", "expandedOwe", "salesStore"];
-  const SKIP = new Set(["id", "mode", "discountMode", "store", "date", "category", "via", "qty", "dueDate", "entryId", "forceNew"]);
+  const SKIP = new Set(["id", "mode", "discountMode", "store", "date", "_day", "category", "via", "qty", "dueDate", "entryId", "forceNew"]);
   const has = (o) => {
     if (o == null) return false;
     if (typeof o === "string") return o.trim() !== "";
