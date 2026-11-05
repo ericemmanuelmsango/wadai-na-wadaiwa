@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v47";
+const APP_VERSION = "v48";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -364,6 +364,7 @@ function startSplitListener() {
       oneTimeProductReset();
       oneTimeStockReset();
       oneTimeProductImport();
+      oneTimePurgeOldRemoved();
     }
   }, (err) => {
     // Rules don't allow reading the whole collection yet → keep working the old way.
@@ -831,7 +832,7 @@ function renderPage(page) {
   if (page === "sales") return renderSalesPage();
   if (page === "owed") return guardFinancials(() => renderColumnPage("owed_to_me"));
   if (page === "owe") return guardFinancials(() => renderColumnPage("i_owe"));
-  if (page === "settings") return renderSettings() + purgedSection();
+  if (page === "settings") return renderSettings();
   return renderDashboard();
 }
 
@@ -4216,17 +4217,27 @@ function repToast(m) { UI.toastMsg = m; rerender(); setTimeout(() => { if (UI.to
 function purgeAfterPdf() {
   const d = UI.pdfDone; if (!d) return;
   const what = (d.cust ? "ya " + d.cust + " " : "") + "kuanzia " + d.from + " hadi " + d.to;
-  if (!confirm("Ondoa mauzo " + d.count + " " + what + " kwenye ripoti?\n\nHayataonekana kwenye Reports, History wala Dashboard.\nHayafutwi kwenye database na stock haiguswi — ukiyahitaji, yarudishe kutoka Settings → Mauzo yaliyoondolewa.")) return;
-  const P = (STATE.settings.repPurge || []).slice();
-  P.push({ id: uid(), from: d.from, to: d.to, cust: d.cust || "", at: Date.now(), count: d.count });
-  STATE.settings.repPurge = P; UI.pdfDone = null; UI.pdfOpen = false;
-  saveSettings(); repToast("🗑️ Mauzo " + d.count + " yameondolewa kwenye ripoti");
+  if (!confirmPermanent("mauzo " + d.count + " " + what)) return;
+  const lines = reportLines().filter((x) => x.date >= d.from && x.date <= d.to && (!d.cust || repCust(x) === d.cust));
+  purgeSalesForever(lines); UI.pdfDone = null; UI.pdfOpen = false;
+  repToast("🗑️ Mauzo " + lines.length + " yamefutwa kabisa"); rerender();
 }
 function restorePurge(id) {
   const p = (STATE.settings.repPurge || []).find((x) => x.id === id); if (!p) return;
   if (!confirm("Rudisha mauzo ya " + p.from + " hadi " + p.to + (p.cust ? " (" + p.cust + ")" : "") + " kwenye ripoti?")) return;
   STATE.settings.repPurge = (STATE.settings.repPurge || []).filter((x) => x.id !== id);
   saveSettings(); repToast("↩️ Yamerudishwa kwenye ripoti");
+}
+/* (owner's request, 2026-11-05) Settings → "Mauzo yaliyoondolewa kwenye ripoti" imeondolewa. Mara moja tu:
+   mauzo yote yaliyokuwa yamefichwa hapo yanafutwa KABISA (stock haiguswi), kisha orodha inaondolewa. */
+function oneTimePurgeOldRemoved() {
+  const P = (STATE.settings && STATE.settings.repPurge) || [];
+  if (!P.length || oneTimePurgeOldRemoved.busy) return;
+  oneTimePurgeOldRemoved.busy = true;
+  const lines = reportLinesAll().filter((x) => repPurged(x));
+  purgeSalesForever(lines);
+  STATE.settings.repPurge = []; saveSettings();
+  oneTimePurgeOldRemoved.busy = false;
 }
 function purgedSection() {
   const P = (STATE.settings.repPurge || []).slice().reverse();
