@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v46";
+const APP_VERSION = "v47";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -3462,7 +3462,7 @@ function renderSalesPage() {
           }).join("")}
         </div>`;
       }).join("") + (customers.length > (UI.custShown || 25) ? `<button class="btn btn-ghost" style="width:100%;margin-top:4px" onclick="UI.custShown=(UI.custShown||25)+25;rerender();">⬇️ Onyesha wateja 25 zaidi (${customers.length - (UI.custShown || 25)} wamebaki) — au tafuta jina juu</button>` : ""))
-    )) + deletedFilesBlock()}
+    )) + oldDeletedNote()}
   </div>`;
 }
 function renderSaleRow(s) {
@@ -3632,20 +3632,54 @@ async function pdfSaleFile(i) {
   const safe = whole ? "Siku" : (f.cust.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "Mteja");
   doc.save("Mauzo-" + safe + "-" + f.date + ".pdf");
 }
+/* ---------- KUFUTA KABISA (owner's request, 2026-11-05) ----------
+   Mauzo ya wateja yakifutwa kwenye Sales au Reports yanaondoka KABISA: hakuna "Rudisha", hakuna History,
+   hayaonekani kwenye ripoti, PDF wala dashboard. Stock HAIRUDI (bidhaa zilishauzwa) — kwa hiyo harakati
+   ya stock inabaki ikiwa imefichwa, na kwa mauzo ya POS inabaki itemId/qty tu (bila mteja, bei wala jina). */
+function confirmPermanent(what) {
+  const v = prompt(`FUTA KABISA ${what}?\n\nHayatarudi tena na hayataonekana popote (Sales, Reports, History, PDF).\nStock haitarudi.\n\nAndika FUTA kuthibitisha:`);
+  return v != null && v.trim().toUpperCase() === "FUTA";
+}
+function purgeSalesForever(lines) {
+  const ids = new Set(), posIds = new Set();
+  lines.forEach((x) => { if (x.pos) posIds.add(String(x.id).split("#")[0]); else ids.add(x.id); });
+  if (ids.size) {
+    const mv = new Set(STATE.sales.filter((x) => ids.has(x.id) && x.movementId).map((x) => x.movementId));
+    if (mv.size) { STATE.stockMovements = STATE.stockMovements.map((m) => (mv.has(m.id) ? { ...m, hidden: true } : m)); saveStockMovements(); }
+    STATE.sales = STATE.sales.filter((x) => !ids.has(x.id));
+    saveSales();
+  }
+  posIds.forEach((id) => {
+    const ps = (STATE.posSales || []).find((x) => x.id === id); if (!ps || !colRef) return;
+    // inabaki itemId + qty tu ili stock isirudi; taarifa zote za mteja na mauzo zinaondoka
+    colRef.doc("possale_" + id).set({ id, store: ps.store || "dukani", date: ps.date || "", createdAt: ps.createdAt || 0, deleted: true, purged: true,
+      items: (ps.items || []).map((i) => ({ itemId: i.itemId, qty: Number(i.qty) || 0 })) }).catch(onSaveError);
+  });
+}
 function deleteSaleFile(i) {
   const f = (window.__files || [])[i]; if (!f) return;
   const list = saleFileList(f); if (!list.length) return;
   const what = f.cust == null ? `mauzo YOTE ya siku ${rcDate(f.date)} (wateja ${new Set(list.map((x) => fileCust(x))).size}, bidhaa ${list.length})` : `faili la ${f.cust} la ${rcDate(f.date)} (bidhaa ${list.length})`;
-  if (!confirm(`Futa ${what}?\n\nYataondoka kwenye orodha ya Sales. Ripoti na faida hazibadiliki, na stock haiguswi.\nUkikosea, unaweza kuyarudisha chini ya ukurasa (🗑️ Faili zilizofutwa).`)) return;
-  const ids = new Set(list.map((x) => x.id));
-  STATE.sales = STATE.sales.map((s) => (ids.has(s.id) ? { ...s, archived: true, archivedDate: todayStr(), fileDeleted: true, fileDeletedAt: Date.now() } : s));
-  saveSales(); rerender();
+  if (!confirmPermanent(what)) return;
+  purgeSalesForever(list); rerender();
 }
 function restoreSaleFile(i) {
   const f = (window.__dfiles || [])[i]; if (!f) return;
   const ids = new Set(saleFileList(f, true).map((x) => x.id));
   STATE.sales = STATE.sales.map((s) => { if (!ids.has(s.id)) return s; const c = { ...s }; delete c.archived; delete c.archivedDate; delete c.fileDeleted; delete c.fileDeletedAt; return c; });
   saveSales(); rerender();
+}
+// faili zilizofutwa zamani (kabla ya kufuta-kabisa) — kitufe kimoja cha kuzifuta kabisa, hakuna kurudisha
+function oldDeletedNote() {
+  const del = STATE.sales.filter((s) => s.archived && s.fileDeleted);
+  if (!del.length) return "";
+  return `<div style="margin-top:12px;font-size:12.5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="color:#8290a4">Kuna faili ${new Set(del.map((s) => (s.date || "") + "|" + fileCust(s))).size} zilizofutwa zamani bado zimehifadhiwa.</span>
+    <button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="purgeOldDeleted()">🗑️ Zifute kabisa</button></div>`;
+}
+function purgeOldDeleted() {
+  const del = STATE.sales.filter((s) => s.archived && s.fileDeleted);
+  if (!del.length || !confirmPermanent(`faili zote ${del.length} zilizofutwa zamani`)) return;
+  purgeSalesForever(del); rerender();
 }
 function deletedFilesBlock() {
   const del = STATE.sales.filter((s) => (s.store || "dukani") === UI.salesStore && s.archived && s.fileDeleted);
@@ -3936,7 +3970,7 @@ function plDayFolders(sales, effBuy, showHist) {
         <strong style="font-size:13.5px">${dopen ? "▾" : "▸"} 🗂️ ${esc(rcDate(d))} <span style="font-weight:400;color:#8290a4">· wateja ${cs.length} · bidhaa ${list.length}</span></strong>
         <span class="no-print" style="display:flex;gap:6px" onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-primary" onclick="pdfRepFolder(${di})">📄 PDF ya siku</button>
-          ${showHist ? `<button class="btn btn-sm btn-ghost" onclick="restoreRepFolder(${di})">↩️ Rudisha siku</button>` : `<button class="btn btn-sm btn-ghost" onclick="archiveRepFolder(${di})">🗄️ History</button>`}
+          <button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="purgeRepFolder(${di})">🗑️ Futa kabisa</button>
         </span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:6px;padding:8px 12px;font-size:12px;border-top:1px solid var(--line)">
@@ -3952,7 +3986,7 @@ function plDayFolders(sales, effBuy, showHist) {
             <span style="display:flex;align-items:center;gap:8px;font-size:12.5px" onclick="event.stopPropagation()">
               <span>Mauzo <b>${fmt(sum(fl, (x) => x.total))}</b></span><span>Faida ${money(sum(fl, repProfit))}</span>
               <button class="btn btn-sm btn-ghost no-print" onclick="pdfRepFolder(${i})">📄 PDF</button>
-              ${showHist ? `<button class="btn btn-sm btn-ghost no-print" title="Rudisha kwenye ripoti" onclick="restoreRepFolder(${i})">↩️</button>` : `<button class="btn btn-sm btn-ghost no-print" title="Hamishia History" onclick="archiveRepFolder(${i})">🗄️</button>`}
+              <button class="btn btn-sm btn-ghost no-print" style="color:#b91c1c" title="Futa kabisa" onclick="purgeRepFolder(${i})">🗑️</button>
             </span>
           </div>
           ${open ? `<table class="recent-table" style="width:100%;font-size:12px"><thead><tr><th style="text-align:left;padding:5px 6px 5px 24px;color:#8290a4">Bidhaa</th><th style="text-align:right;padding:5px 6px;color:#8290a4">Idadi × Bei</th><th style="text-align:right;padding:5px 6px;color:#8290a4">Bei ya kununua</th><th style="text-align:right;padding:5px 6px;color:#8290a4">Jumla</th><th style="text-align:right;padding:5px 6px;color:#8290a4">Faida</th></tr></thead><tbody>
@@ -3972,6 +4006,14 @@ function toggleRepFolder(i, kind, first) {
 }
 function repFolderLines(f, hist) {
   return reportLines().filter((x) => x.date === f.date && (f.cust == null || repCust(x) === f.cust) && repArchived(x) === !!hist);
+}
+function purgeRepFolder(i) {
+  const f = (window.__rpf || [])[i]; if (!f) return;
+  const lines = reportLinesAll().filter((x) => x.date === f.date && (f.cust == null || repCust(x) === f.cust));
+  if (!lines.length) return;
+  const what = f.cust == null ? `mauzo YOTE ya ${rcDate(f.date)} (bidhaa ${lines.length})` : `mauzo ya ${f.cust} ya ${rcDate(f.date)} (bidhaa ${lines.length})`;
+  if (!confirmPermanent(what)) return;
+  purgeSalesForever(lines); rerender();
 }
 function archiveRepFolder(i) {
   const f = (window.__rpf || [])[i]; if (!f) return;
