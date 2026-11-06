@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v49";
+const APP_VERSION = "v50";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -3930,7 +3930,7 @@ function undoReportClear() {
 }
 function plViewTabs() {
   const v = UI.plView || "day";
-  const b = (k, label) => `<button class="chip-btn" style="${v === k ? "background:var(--navy,#0f1f3d);color:#fff" : ""}" onclick="UI.plView='${k}';UI.plOpen=null;rerender();">${label}</button>`;
+  const b = (k, label) => `<button class="chip-btn${v === k ? " rp-on" : ""}" onclick="UI.plView='${k}';UI.plOpen=null;rerender();">${label}</button>`;
   return `<div class="discount-mode-toggle no-print" style="margin:6px 0 12px">${b("day", "📅 Kwa Siku")}${b("customer", "👤 Kwa Mteja")}${b("item", "📦 Kila Bidhaa")}</div>`;
 }
 /* ---------- RIPOTI KWA SIKU: folda ya kila tarehe -> faili la kila mteja, na FAIDA/HASARA (owner's request, 2026-11-03)
@@ -4065,7 +4065,7 @@ async function pdfRepFolder(i) {
 function rpWords(q) { return String(q || "").toLowerCase().split(/\s+/).filter(Boolean); }
 function rpMatch(text, words) { const t = String(text || "").toLowerCase(); return words.every((w) => t.includes(w)); }
 function rpMoney(n) { return `<span style="font-weight:700;color:${n >= 0 ? "var(--green)" : "#dc2636"}">${n < 0 ? "−" : ""}${fmt(Math.abs(n))}</span>`; }
-function rpPill(t) { return `<span style="display:inline-block;background:var(--paper-alt,#f1f4f8);border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:11px;color:#55657c;margin:2px 4px 2px 0">${t}</span>`; }
+function rpPill(t) { return `<span class="rp-pill">${t}</span>`; }
 function plItemView(salesInRange, effBuy, showHist) {
   const words = rpWords(UI.rpItemQ);
   const src = UI.rpItemAll ? reportLines() : salesInRange;
@@ -4099,7 +4099,7 @@ function plItemView(salesInRange, effBuy, showHist) {
       r.list.forEach((x) => { const c = repCust(x); const o = (byC[c] = byC[c] || { c, qty: 0, total: 0, days: new Set(), last: "" }); o.qty += x.qty; o.total += x.total; o.days.add(x.date); if (x.date > o.last) o.last = x.date; });
       const cs = Object.values(byC).sort((a, b) => b.qty - a.qty || (a.last < b.last ? 1 : -1));
       inner = `<tr><td colspan="5" style="padding:0 0 8px 0;background:var(--paper-alt,#f6f8fb)">
-        <div style="padding:8px 10px 4px 22px;font-size:12px;color:#55657c">👥 <b>${esc(r.name)}</b> imeuziwa wateja <b>${cs.length}</b>:</div>
+        <div class="rp-sub" style="padding:8px 10px 4px 22px;font-size:12px">👥 <b>${esc(r.name)}</b> imeuziwa wateja <b>${cs.length}</b>:</div>
         <table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr>
           <th style="text-align:left;padding:4px 6px 4px 22px;color:#8290a4">Mteja</th><th style="text-align:right;padding:4px 6px;color:#8290a4">Idadi</th><th style="text-align:right;padding:4px 6px;color:#8290a4">Jumla</th><th style="text-align:left;padding:4px 6px;color:#8290a4">Tarehe</th></tr></thead><tbody>
         ${cs.map((o) => { const ds = [...o.days].sort().reverse(); return `<tr style="border-top:1px solid var(--line)">
@@ -4109,8 +4109,11 @@ function plItemView(salesInRange, effBuy, showHist) {
           <td style="padding:6px">${ds.slice(0, 5).map((d) => rpPill(esc(rcDate(d)))).join("")}${ds.length > 5 ? rpPill("+" + (ds.length - 5)) : ""}</td></tr>`; }).join("")}
         </tbody></table></td></tr>`;
     }
-    return `<tr style="cursor:pointer;${open ? "background:#eef4ff" : ""}" onclick="rpItemToggle(${i})">
-      <td style="padding:8px 6px">${open ? "▾" : "▸"} 📦 <b>${esc(r.name)}</b></td>
+    const cq = {}; r.list.forEach((x) => { const c = repCust(x); cq[c] = (cq[c] || 0) + x.qty; });
+    const cl = Object.keys(cq).sort((a, b) => cq[b] - cq[a]);
+    const chips = cl.slice(0, 12).map((c) => `<span class="rp-cchip">👤 ${esc(c)} <b>×${cq[c]}</b></span>`).join("") + (cl.length > 12 ? `<span class="rp-cchip">+${cl.length - 12} wengine</span>` : "");
+    return `<tr class="${open ? "rp-open" : ""}" style="cursor:pointer" onclick="rpItemToggle(${i})">
+      <td style="padding:8px 6px">${open ? "▾" : "▸"} 📦 <b style="font-size:13.5px">${esc(r.name)}</b>${open ? "" : `<div style="margin-top:4px">${chips}</div>`}</td>
       <td style="padding:8px 6px;text-align:right;font-weight:700">${r.qty}</td>
       <td style="padding:8px 6px;text-align:right">${r.custs}</td>
       <td style="padding:8px 6px;text-align:right">${fmt(r.total)}</td>
@@ -4143,7 +4146,7 @@ function plCustView(sales, effBuy, showHist) {
     : sort === "karibuni" ? (a.last < b.last ? 1 : a.last > b.last ? -1 : b.total - a.total)
     : b.total - a.total);
   window.__plKeys = rows.map((r) => r.c);
-  const chip = (k, t) => `<button class="chip-btn" style="${sort === k ? "background:var(--navy,#0f1f3d);color:#fff" : ""}" onclick="UI.rpCustSort='${k}';rerender();">${t}</button>`;
+  const chip = (k, t) => `<button class="chip-btn${sort === k ? " rp-on" : ""}" onclick="UI.rpCustSort='${k}';rerender();">${t}</button>`;
   const bar = `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
     <input id="rp-cust-q" type="search" autocomplete="off" class="field field-sm" style="flex:1;min-width:180px;max-width:320px" placeholder="🔍 Tafuta mteja..." value="${esc(UI.rpCustQ || "")}" oninput="UI.rpCustQ=this.value;softRerender();">
     <span style="display:flex;gap:4px;flex-wrap:wrap">${chip("mauzo", "💰 Mauzo makubwa")}${chip("az", "🔤 A–Z")}${chip("karibuni", "🕒 Wa karibuni")}</span>
@@ -4161,15 +4164,15 @@ function plCustView(sales, effBuy, showHist) {
         const dl = r.list.filter((x) => x.date === d);
         return `<div style="border-top:1px solid var(--line);padding:8px 12px 8px 52px">
           <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><b>📅 ${esc(rcDate(d))}</b><span>Jumla <b>${fmt(dl.reduce((a, x) => a + x.total, 0))}</b> · Faida ${rpMoney(dl.reduce((a, x) => a + repProfit(x), 0))}</span></div>
-          ${dl.map((x) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0;color:#334155"><span>• ${esc(x.itemName)}${x.pos ? ` <span style="color:#8290a4">· POS</span>` : ""}</span><span style="white-space:nowrap">${x.qty} × ${fmt(x.sellPrice)} = <b>${fmt(x.total)}</b></span></div>`).join("")}
+          ${dl.map((x) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;padding:3px 0;color:var(--ink)"><span>• ${esc(x.itemName)}${x.pos ? ` <span style="color:#8290a4">· POS</span>` : ""}</span><span style="white-space:nowrap">${x.qty} × ${fmt(x.sellPrice)} = <b>${fmt(x.total)}</b></span></div>`).join("")}
         </div>`;
       }).join("");
     }
-    return `<div style="border:1px solid var(--line);border-radius:10px;margin-bottom:8px;overflow:hidden;${open ? "box-shadow:0 2px 8px rgba(15,31,61,.08)" : ""}">
-      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;${open ? "background:#eef4ff" : ""}" onclick="rpCustToggle(${i})">
-        <div style="width:32px;height:32px;border-radius:50%;background:var(--navy,#0f1f3d);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none">${esc(ini)}</div>
+    return `<div class="rp-card">
+      <div class="${open ? "rp-open" : ""}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer" onclick="rpCustToggle(${i})">
+        <div class="rp-av">${esc(ini)}</div>
         <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${open ? "▾" : "▸"} ${esc(r.c)}</div>
+          <div class="rp-name">${open ? "▾" : "▸"} ${esc(r.c)}</div>
           <div>${rpPill("mara " + r.days.length)}${rpPill("bidhaa " + r.qty)}${rpPill("mwisho " + esc(rcDate(r.last)))}</div>
         </div>
         <div style="text-align:right;font-size:12.5px;flex:none">
