@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v48";
+const APP_VERSION = "v49";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -3857,21 +3857,8 @@ function renderReports() {
     ${unknownCostCount > 0 ? `<p style="font-size:11.5px;color:#b8862f;margin-bottom:10px">⚠️ ${unknownCostCount} sale(s) in this range have no known buying price (item was never received with a price in Main Store), so cost/profit may be understated.</p>` : ""}
     ${plViewTabs()}${plHistoryBar(showHist)}
     ${(UI.plView || "day") === "day" ? plDayFolders(salesInRange, effBuy, showHist)
-      : UI.plView === "customer" ? plGroupTable(salesInRange, repCust, "Mteja", effBuy, false, "c", showHist)
-      : `<table class="recent-table" style="width:100%">
-      <thead><tr><th style="text-align:left;font-size:10.5px;color:#8290a4;padding:6px">Item</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Qty</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Sold @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Bought @</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Profit</th><th style="text-align:right;font-size:10.5px;color:#8290a4;padding:6px">Date</th></tr></thead>
-      <tbody>
-        ${salesInRange.length === 0 ? `<tr><td colspan="6" style="padding:14px;text-align:center;color:#a3aebe">No sales in this date range.</td></tr>` : salesInRange.map((s) => `
-          <tr>
-            <td style="padding:8px 6px">${esc(s.itemName)}</td>
-            <td style="padding:8px 6px;text-align:right">${s.qty}</td>
-            <td style="padding:8px 6px;text-align:right">${fmt(s.sellPrice)}</td>
-            <td style="padding:8px 6px;text-align:right">${effBuy(s) != null ? fmt(effBuy(s)) : "—"}</td>
-            <td style="padding:8px 6px;text-align:right;font-weight:600;color:${effBuy(s) == null ? "#a3aebe" : (s.sellPrice - effBuy(s)) >= 0 ? "var(--green)" : "#dc2636"}">${effBuy(s) != null ? ((s.sellPrice - effBuy(s)) < 0 ? "−" : "") + fmt(Math.abs((s.sellPrice - effBuy(s)) * s.qty)) : "—"}</td>
-            <td style="padding:8px 6px;text-align:right;color:#8290a4">${s.date}</td>
-          </tr>`).join("")}
-      </tbody>
-    </table>`}
+      : UI.plView === "customer" ? plCustView(salesInRange, effBuy, showHist)
+      : plItemView(salesInRange, effBuy, showHist)}
   </div>`;
 }
 
@@ -4072,6 +4059,132 @@ async function pdfRepFolder(i) {
   const safe = whole ? "Siku" : (f.cust.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "") || "Mteja");
   doc.save("Ripoti-" + safe + "-" + f.date + ".pdf");
 }
+/* ---------- KILA BIDHAA: tafuta bidhaa -> uone iliuziwa nani na nani (owner's request, 2026-11-06) ----------
+   Kila bidhaa: idadi iliyouzwa, wateja wangapi, mauzo na faida. Ukifungua: kila mteja, mara ngapi, idadi, jumla na tarehe.
+   "Tarehe zote" inatafuta mauzo yote (pamoja na yaliyo History), si tarehe ulizochagua juu tu. */
+function rpWords(q) { return String(q || "").toLowerCase().split(/\s+/).filter(Boolean); }
+function rpMatch(text, words) { const t = String(text || "").toLowerCase(); return words.every((w) => t.includes(w)); }
+function rpMoney(n) { return `<span style="font-weight:700;color:${n >= 0 ? "var(--green)" : "#dc2636"}">${n < 0 ? "−" : ""}${fmt(Math.abs(n))}</span>`; }
+function rpPill(t) { return `<span style="display:inline-block;background:var(--paper-alt,#f1f4f8);border:1px solid var(--line);border-radius:999px;padding:1px 8px;font-size:11px;color:#55657c;margin:2px 4px 2px 0">${t}</span>`; }
+function plItemView(salesInRange, effBuy, showHist) {
+  const words = rpWords(UI.rpItemQ);
+  const src = UI.rpItemAll ? reportLines() : salesInRange;
+  const groups = {};
+  src.forEach((x) => {
+    const k = x.itemId || "n:" + String(x.itemName || "").trim().toLowerCase();
+    const g = (groups[k] = groups[k] || { k, name: x.itemName || "—", list: [], lastTs: 0 });
+    g.list.push(x);
+    if ((x.ts || 0) >= g.lastTs) { g.lastTs = x.ts || 0; g.name = x.itemName || g.name; }
+  });
+  let rows = Object.values(groups).map((g) => ({
+    ...g, qty: g.list.reduce((a, x) => a + x.qty, 0), total: g.list.reduce((a, x) => a + x.total, 0),
+    profit: g.list.reduce((a, x) => a + repProfit(x), 0), custs: new Set(g.list.map(repCust)).size,
+  }));
+  if (words.length) rows = rows.filter((r) => rpMatch(r.name, words));
+  rows.sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
+  window.__rpItems = rows.map((r) => r.k);
+  const openK = rows.length === 1 ? rows[0].k : UI.rpItemOpen;
+  const bar = `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+    <input id="rp-item-q" type="search" autocomplete="off" class="field field-sm" style="flex:1;min-width:200px;max-width:360px" placeholder="🔍 Tafuta bidhaa (mf. tairi, cheni, bulb)..." value="${esc(UI.rpItemQ || "")}" oninput="UI.rpItemQ=this.value;UI.rpItemOpen=null;softRerender();">
+    <label style="font-size:12.5px;display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${UI.rpItemAll ? "checked" : ""} onchange="UI.rpItemAll=this.checked;rerender();"> Tarehe zote</label>
+    <span style="font-size:11.5px;color:#8290a4">${UI.rpItemAll ? "Mauzo yote tangu mwanzo" : "Kwenye tarehe ulizochagua juu"}</span>
+  </div>`;
+  if (!rows.length) return bar + `<p class="empty-note">${words.length ? "Hakuna bidhaa inayoitwa \"" + esc(UI.rpItemQ) + "\" iliyouzwa " + (UI.rpItemAll ? "." : "kwenye tarehe hizi. Jaribu kuweka ✔ Tarehe zote.") : "Hakuna mauzo kwenye kipindi hiki."}</p>`;
+  const th = (t, r) => `<th style="text-align:${r ? "right" : "left"};font-size:10.5px;color:#8290a4;padding:6px">${t}</th>`;
+  const body = rows.map((r, i) => {
+    const open = openK === r.k;
+    let inner = "";
+    if (open) {
+      const byC = {};
+      r.list.forEach((x) => { const c = repCust(x); const o = (byC[c] = byC[c] || { c, qty: 0, total: 0, days: new Set(), last: "" }); o.qty += x.qty; o.total += x.total; o.days.add(x.date); if (x.date > o.last) o.last = x.date; });
+      const cs = Object.values(byC).sort((a, b) => b.qty - a.qty || (a.last < b.last ? 1 : -1));
+      inner = `<tr><td colspan="5" style="padding:0 0 8px 0;background:var(--paper-alt,#f6f8fb)">
+        <div style="padding:8px 10px 4px 22px;font-size:12px;color:#55657c">👥 <b>${esc(r.name)}</b> imeuziwa wateja <b>${cs.length}</b>:</div>
+        <table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr>
+          <th style="text-align:left;padding:4px 6px 4px 22px;color:#8290a4">Mteja</th><th style="text-align:right;padding:4px 6px;color:#8290a4">Idadi</th><th style="text-align:right;padding:4px 6px;color:#8290a4">Jumla</th><th style="text-align:left;padding:4px 6px;color:#8290a4">Tarehe</th></tr></thead><tbody>
+        ${cs.map((o) => { const ds = [...o.days].sort().reverse(); return `<tr style="border-top:1px solid var(--line)">
+          <td style="padding:6px 6px 6px 22px">👤 <b>${esc(o.c)}</b>${ds.length > 1 ? ` <span style="color:#8290a4">· mara ${ds.length}</span>` : ""}</td>
+          <td style="padding:6px;text-align:right;font-weight:700">${o.qty}</td>
+          <td style="padding:6px;text-align:right">${fmt(o.total)}</td>
+          <td style="padding:6px">${ds.slice(0, 5).map((d) => rpPill(esc(rcDate(d)))).join("")}${ds.length > 5 ? rpPill("+" + (ds.length - 5)) : ""}</td></tr>`; }).join("")}
+        </tbody></table></td></tr>`;
+    }
+    return `<tr style="cursor:pointer;${open ? "background:#eef4ff" : ""}" onclick="rpItemToggle(${i})">
+      <td style="padding:8px 6px">${open ? "▾" : "▸"} 📦 <b>${esc(r.name)}</b></td>
+      <td style="padding:8px 6px;text-align:right;font-weight:700">${r.qty}</td>
+      <td style="padding:8px 6px;text-align:right">${r.custs}</td>
+      <td style="padding:8px 6px;text-align:right">${fmt(r.total)}</td>
+      <td style="padding:8px 6px;text-align:right">${rpMoney(r.profit)}</td></tr>${inner}`;
+  }).join("");
+  const sQ = rows.reduce((a, r) => a + r.qty, 0), sT = rows.reduce((a, r) => a + r.total, 0), sP = rows.reduce((a, r) => a + r.profit, 0);
+  return bar + `<div style="overflow-x:auto"><table class="recent-table" style="width:100%;min-width:460px">
+    <thead><tr>${th("Bidhaa")}${th("Idadi", 1)}${th("Wateja", 1)}${th("Mauzo", 1)}${th("Faida", 1)}</tr></thead>
+    <tbody>${body}</tbody>
+    <tfoot><tr style="border-top:2px solid var(--line)"><td style="padding:8px 6px;font-weight:800">JUMLA · bidhaa ${rows.length}</td><td style="padding:8px 6px;text-align:right;font-weight:800">${sQ}</td><td></td><td style="padding:8px 6px;text-align:right;font-weight:800">${fmt(sT)}</td><td style="padding:8px 6px;text-align:right">${rpMoney(sP)}</td></tr></tfoot>
+  </table></div>`;
+}
+function rpItemToggle(i) { const k = (window.__rpItems || [])[i]; if (k == null) return; UI.rpItemOpen = UI.rpItemOpen === k ? null : k; rerender(); }
+
+/* ---------- KWA MTEJA: mpangilio mpya (owner's request, 2026-11-06) ----------
+   Tafuta mteja; panga kwa mauzo makubwa / A–Z / wa karibuni. Kila mteja: mara alizonunua, bidhaa, mauzo, faida, mara ya mwisho.
+   Ukifungua: manunuzi yake kwa tarehe (mpya juu), kila tarehe na bidhaa zake. 🗄️ Hamishia History inabaki. */
+function plCustView(sales, effBuy, showHist) {
+  const words = rpWords(UI.rpCustQ);
+  const sort = UI.rpCustSort || "mauzo";
+  const groups = {};
+  sales.forEach((x) => (groups[repCust(x)] = groups[repCust(x)] || []).push(x));
+  let rows = Object.keys(groups).map((c) => {
+    const list = groups[c], days = [...new Set(list.map((x) => x.date))].sort().reverse();
+    return { c, list, days, total: list.reduce((a, x) => a + x.total, 0), profit: list.reduce((a, x) => a + repProfit(x), 0), qty: list.reduce((a, x) => a + x.qty, 0), last: days[0] || "", unknown: list.some((x) => effBuy(x) == null) };
+  });
+  if (words.length) rows = rows.filter((r) => rpMatch(r.c, words));
+  const walk = (r) => (r.c === "Mteja wa kawaida" ? 1 : 0);
+  rows.sort((a, b) => sort === "az" ? walk(a) - walk(b) || a.c.localeCompare(b.c)
+    : sort === "karibuni" ? (a.last < b.last ? 1 : a.last > b.last ? -1 : b.total - a.total)
+    : b.total - a.total);
+  window.__plKeys = rows.map((r) => r.c);
+  const chip = (k, t) => `<button class="chip-btn" style="${sort === k ? "background:var(--navy,#0f1f3d);color:#fff" : ""}" onclick="UI.rpCustSort='${k}';rerender();">${t}</button>`;
+  const bar = `<div class="no-print" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+    <input id="rp-cust-q" type="search" autocomplete="off" class="field field-sm" style="flex:1;min-width:180px;max-width:320px" placeholder="🔍 Tafuta mteja..." value="${esc(UI.rpCustQ || "")}" oninput="UI.rpCustQ=this.value;softRerender();">
+    <span style="display:flex;gap:4px;flex-wrap:wrap">${chip("mauzo", "💰 Mauzo makubwa")}${chip("az", "🔤 A–Z")}${chip("karibuni", "🕒 Wa karibuni")}</span>
+  </div>`;
+  if (!rows.length) return bar + `<p class="empty-note">${words.length ? "Hakuna mteja anayeitwa \"" + esc(UI.rpCustQ) + "\" kwenye tarehe hizi." : showHist ? "Hakuna kitu kwenye History kwa kipindi hiki." : "Hakuna mauzo kwenye kipindi hiki."}</p>`;
+  const act = (i) => showHist
+    ? `<button class="btn btn-sm btn-ghost no-print" title="Rudisha kwenye ripoti" onclick="restoreReportRow('c',${i},event)">↩️</button>`
+    : `<button class="btn btn-sm btn-ghost no-print" title="Hamishia History" onclick="archiveReportRow('c',${i},event)">🗄️</button>`;
+  const cards = rows.map((r, i) => {
+    const open = UI.rpCustOpen === r.c;
+    const ini = (r.c.trim()[0] || "?").toUpperCase();
+    let inner = "";
+    if (open) {
+      inner = r.days.map((d) => {
+        const dl = r.list.filter((x) => x.date === d);
+        return `<div style="border-top:1px solid var(--line);padding:8px 12px 8px 52px">
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><b>📅 ${esc(rcDate(d))}</b><span>Jumla <b>${fmt(dl.reduce((a, x) => a + x.total, 0))}</b> · Faida ${rpMoney(dl.reduce((a, x) => a + repProfit(x), 0))}</span></div>
+          ${dl.map((x) => `<div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0;color:#334155"><span>• ${esc(x.itemName)}${x.pos ? ` <span style="color:#8290a4">· POS</span>` : ""}</span><span style="white-space:nowrap">${x.qty} × ${fmt(x.sellPrice)} = <b>${fmt(x.total)}</b></span></div>`).join("")}
+        </div>`;
+      }).join("");
+    }
+    return `<div style="border:1px solid var(--line);border-radius:10px;margin-bottom:8px;overflow:hidden;${open ? "box-shadow:0 2px 8px rgba(15,31,61,.08)" : ""}">
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;${open ? "background:#eef4ff" : ""}" onclick="rpCustToggle(${i})">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--navy,#0f1f3d);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;flex:none">${esc(ini)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${open ? "▾" : "▸"} ${esc(r.c)}</div>
+          <div>${rpPill("mara " + r.days.length)}${rpPill("bidhaa " + r.qty)}${rpPill("mwisho " + esc(rcDate(r.last)))}</div>
+        </div>
+        <div style="text-align:right;font-size:12.5px;flex:none">
+          <div><b>${fmt(r.total)}</b></div>
+          <div>${rpMoney(r.profit)}${r.unknown ? `<span title="Baadhi ya bidhaa hazina bei ya kununulia" style="color:#b8862f"> *</span>` : ""}</div>
+        </div>
+        <div style="flex:none" onclick="event.stopPropagation()">${act(i)}</div>
+      </div>${inner}
+    </div>`;
+  }).join("");
+  const sT = rows.reduce((a, r) => a + r.total, 0), sP = rows.reduce((a, r) => a + r.profit, 0);
+  return bar + cards + `<div style="display:flex;justify-content:space-between;padding:10px 12px;border:2px solid var(--line);border-radius:8px;font-size:12.5px"><b>JUMLA · wateja ${rows.length}</b><span>Mauzo <b>${fmt(sT)}</b> · Faida ${rpMoney(sP)}</span></div>`;
+}
+function rpCustToggle(i) { const c = (window.__plKeys || [])[i]; if (c == null) return; UI.rpCustOpen = UI.rpCustOpen === c ? null : c; rerender(); }
+
 function plGroupTable(sales, keyFn, label, effBuy, newestFirst, kind, showHist) {
   const groups = {};
   sales.forEach((x) => { const k = keyFn(x); (groups[k] = groups[k] || []).push(x); });
