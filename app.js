@@ -3397,7 +3397,6 @@ function renderSalesPage() {
     ${(UI.salesView === "day" ? (
       days.length === 0 ? `<p class="empty-note">No sales recorded yet.</p>` : (window.__files = [], days.slice(0, UI.salesDaysShown || 10).map((day, dn) => {
         const list = salesByDay[day];
-        const dayTotal = list.reduce((s, x) => s + x.total, 0);
         // FOLDA YA SIKU: wateja wote wa tarehe hii, kila mteja faili lake
         const byC = {}; list.forEach((x) => { const c = fileCust(x) || "Walk-in Customer"; (byC[c] = byC[c] || []).push(x); });
         const cs = Object.keys(byC).sort((a, b) => Math.max(...byC[b].map((x) => x.createdAt || 0)) - Math.max(...byC[a].map((x) => x.createdAt || 0)));
@@ -3408,7 +3407,6 @@ function renderSalesPage() {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;background:var(--paper-alt);cursor:pointer" onclick="toggleSaleFile(${di},'D')">
             <strong style="font-size:13.5px">${dopen ? "▾" : "▸"} 🗂️ ${esc(rcDate(day))} <span style="font-weight:400;color:#8290a4">· wateja ${cs.length} · bidhaa ${list.length}</span></strong>
             <span style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
-              <b style="color:var(--green);margin-right:4px">${fmt(dayTotal)}</b>
               <button class="btn btn-sm btn-primary" onclick="pdfSaleFile(${di})">📄 PDF ya siku</button>
               <button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="deleteSaleFile(${di})">🗑️ Futa siku nzima</button>
             </span>
