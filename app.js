@@ -3432,7 +3432,6 @@ function renderSalesPage() {
     ) : (
       customers.length === 0 ? `<p class="empty-note">${custQ ? "Hakuna mteja anayelingana na \"" + esc(UI.custSearch) + "\"." : "No sales recorded yet."}</p>` : (window.__files = [], customers.slice(0, UI.custShown || 25).map((cust) => {
         const list = salesByCustomer[cust];
-        const custTotal = list.reduce((s, x) => s + x.total, 0);
         // FAILI: kila siku ya mauzo ni faili lake — mauzo ya juzi hayachanganyiki na ya leo
         const byDay = {}; list.forEach((x) => (byDay[x.date || ""] = byDay[x.date || ""] || []).push(x));
         const fdays = Object.keys(byDay).sort((a, b) => (a < b ? 1 : -1));
@@ -3440,17 +3439,14 @@ function renderSalesPage() {
         <div style="border:1px solid var(--line);border-radius:8px;margin-bottom:10px;overflow:hidden">
           <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--paper-alt)">
             <strong style="font-size:13px">👤 ${esc(cust)} <span style="font-weight:400;color:#8290a4">(faili ${fdays.length})</span></strong>
-            <span style="font-weight:700;color:var(--green)">${fmt(custTotal)}</span>
           </div>
           ${fdays.map((d, n) => {
             const fl = byDay[d], i = window.__files.push({ cust, store: UI.salesStore, date: d, first: n === 0 }) - 1;
             const key = cust + "|" + d, open = UI.fileOpen && key in UI.fileOpen ? UI.fileOpen[key] : n === 0;
-            const ft = fl.reduce((s, x) => s + x.total, 0);
             return `<div style="border-top:1px solid var(--line)">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;cursor:pointer" onclick="toggleSaleFile(${i})">
                 <span style="font-size:13px">${open ? "▾" : "▸"} 📁 <b>${esc(rcDate(d))}</b> <span style="color:#8290a4">· bidhaa ${fl.length}</span></span>
                 <span style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
-                  <b style="color:var(--green);margin-right:4px">${fmt(ft)}</b>
                   <button class="btn btn-sm btn-ghost" onclick="printSaleFile(${i})">🖨️ Print</button>
                   <button class="btn btn-sm btn-primary" onclick="pdfSaleFile(${i})">📄 PDF</button>
                   <button class="btn btn-sm btn-ghost" style="color:#b91c1c" onclick="deleteSaleFile(${i})">🗑️ Futa faili</button>
