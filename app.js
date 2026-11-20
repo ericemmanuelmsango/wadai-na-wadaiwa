@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v51";
+const APP_VERSION = "v52";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -5803,8 +5803,7 @@ function rcShop() {
 function posStyleReceipt(r) {
   const sh = rcShop();
   return `<div class="receipt-print rcp">
-    <div class="rcp-lg">${companyLogo(54)}</div>
-    <h3>${esc(sh.name)}</h3>
+    <h3 style="font-size:20px;letter-spacing:3px">INVOICE</h3>
     ${sh.line ? `<div class="c b">${esc(sh.line)}</div>` : ""}
     ${sh.phone ? `<div class="c">Simu: ${esc(sh.phone)}</div>` : ""}${sh.address ? `<div class="c">${esc(sh.address)}</div>` : ""}
     <div class="dl"></div>
