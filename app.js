@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v50";
+const APP_VERSION = "v51";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -6027,7 +6027,7 @@ const DEV = (function () {
   function endSession() { const s = sessions[sessions.length - 1]; if (s && !s.out) s.out = Date.now(); try { localStorage.setItem(SKEY, JSON.stringify(sessions)); } catch (e) {} }
   newSession();
   const label = () => { try { return localStorage.getItem("ee_dev_label") || ""; } catch (e) { return ""; } };
-  function net() { const c = navigator.connection || {}; return { online: navigator.onLine !== false, type: c.effectiveType || null, rtt: c.rtt != null ? c.rtt : null, down: c.downlink != null ? c.downlink : null, writeMs: st.writeMs }; }
+  function net() { const c = navigator.connection || {}; return { online: navigator.onLine !== false, type: c.effectiveType || null, rtt: c.rtt != null ? c.rtt : null, down: c.downlink != null ? c.downlink : null, writeMs: (st.writeAt && Date.now() - st.writeAt < 240000) ? st.writeMs : null }; }
   function quality(n) {
     if (!n || n.online === false) return "offline";
     if (n.type === "slow-2g" || n.type === "2g" || (n.rtt != null && n.rtt > 900) || (n.writeMs != null && n.writeMs > 5000)) return "dhaifu";
@@ -6040,12 +6040,13 @@ const DEV = (function () {
     const t0 = Date.now(); st.lastBeat = t0;
     const doc = { kind: "device", id, app: APP, label: label(), type, os, browser: br, user: "" || "", ver: APP_VERSION, lastSeen: t0, online: true, leftAt: null,
       sessionStart: (sessions[sessions.length - 1] || {}).in || t0, sessions, net: net(), pending: !!((UI.sync && UI.sync.pending)), ...(extra || {}) };
-    r.set(doc, { merge: true }).then(() => { st.writeMs = Date.now() - t0; }).catch(() => {});
+    const wasOn = navigator.onLine !== false;   // kasi inapimwa tu ikiwa ilianza na internet (si muda wa kusubiri offline)
+    r.set(doc, { merge: true }).then(() => { if (wasOn && navigator.onLine !== false) { st.writeMs = Date.now() - t0; st.writeAt = Date.now(); } }).catch(() => {});
   }
   function leave() { endSession(); beat({ online: false, leftAt: Date.now() }); }
   setInterval(() => { if (document.visibilityState !== "hidden") beat(); }, 180000);
   (function first(n) { if (ref()) beat(); else if (n < 40) setTimeout(() => first(n + 1), 3000); })(0);
-  window.addEventListener("online", () => beat());
+  window.addEventListener("online", () => { st.writeMs = null; st.writeAt = 0; try { db.enableNetwork().catch(() => {}); } catch (e) {} beat(); setTimeout(banner, 300); });
   window.addEventListener("offline", () => { st.writeMs = null; banner(); });
   window.addEventListener("pagehide", leave);
   window.addEventListener("beforeunload", (e) => { if ((UI.sync && UI.sync.pending)) { e.preventDefault(); e.returnValue = ""; } });
@@ -6057,12 +6058,21 @@ const DEV = (function () {
 
   // ---------- onyo la internet dhaifu (nje ya #app, halifutwi na render)
   function banner() {
-    const q = quality(net()); const pend = !!((UI.sync && UI.sync.pending));
+    const q = quality(net()); const rawPend = !!((UI.sync && UI.sync.pending));
+    if (rawPend) { if (!st.pendSince) st.pendSince = Date.now(); } else st.pendSince = 0;
+    const pend = rawPend && Date.now() - st.pendSince > 15000;   // data zimekaa >15s bila kufika (si kila mauzo madogo)
     let b = document.getElementById("dev-net-bar");
-    if (q !== "offline" && q !== "dhaifu" && !(pend && q !== "nzuri")) { if (b) b.remove(); return; }
+    if (q !== "offline" && q !== "dhaifu" && !pend) { if (b) b.remove(); return; }
+    if (q !== "offline" && Date.now() - st.lastBeat > 30000) beat();   // pima kasi upya kila 30s wakati kuna tatizo
     if (!b) { b = document.createElement("div"); b.id = "dev-net-bar"; b.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9998;padding:7px 12px;font:13px system-ui,sans-serif;text-align:center;color:#111"; document.body.appendChild(b); }
     b.style.background = q === "offline" ? "#fca5a5" : "#fde68a";
-    b.textContent = (q === "offline" ? "📵 Hakuna internet" : "📶 Internet dhaifu") + " - USIREFRESH. Kazi yako inahifadhiwa kwenye kifaa hiki na itatumwa yenyewe internet ikirudi." + (pend ? " (⏳ kuna data zinasubiri kutumwa)" : "");
+    const msg = (q === "offline" ? "📵 Hakuna internet - USIREFRESH. Kazi yako inahifadhiwa kwenye kifaa hiki na itatumwa yenyewe internet ikirudi."
+      : q === "dhaifu" ? "📶 Internet dhaifu - USIREFRESH. Kazi yako inahifadhiwa kwenye kifaa hiki na itatumwa yenyewe."
+      : "⏳ Data zinachelewa kufika cloud - acha mfumo wazi.") + (pend ? " (⏳ kuna data zinasubiri kutumwa)" : "");
+    if (b.dataset.msg !== msg) {
+      b.dataset.msg = msg; b.textContent = msg + " ";
+      if (q !== "offline") { const k = document.createElement("button"); k.textContent = "🔄 Tuma sasa"; k.style.cssText = "margin-left:6px;border:1px solid #111;background:#fff;border-radius:6px;padding:2px 8px;font:12px system-ui;cursor:pointer"; k.onclick = () => DEV.flush(); b.appendChild(k); }
+    }
   }
   setInterval(banner, 5000); setTimeout(banner, 1500);
 
