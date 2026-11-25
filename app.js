@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v52";
+const APP_VERSION = "v55";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -639,7 +639,7 @@ function syncDatalists() {
   }
   const sups = new Set();
   (STATE.deliveries || []).forEach((d) => d.supplier && sups.add(d.supplier));
-  STATE.stockMovements.forEach((m) => m.type === "in" && m.supplier && m.supplier !== "Godown Transfer" && sups.add(m.supplier));
+  STATE.stockMovements.forEach((m) => m.type === "in" && m.supplier && !/^(Godown|Dukani) Transfer$/.test(m.supplier) && sups.add(m.supplier));
   const supList = [...sups].sort((a, b) => a.localeCompare(b));
   const sig2 = supList.join("\u0001");
   if (sig2 !== _supplierListSig) {
@@ -731,6 +731,7 @@ function renderShell() {
     products: ["Products", "Items you sell, for faster order entry"],
     mainstore: ["Dukani", "Shop stock — receiving only"],
     godown: ["Godown", "Warehouse stock — receive and dispatch"],
+    received: ["Mzigo Uliopokelewa", "Stock iliyopokelewa — Dukani, Godown au zote kwa pamoja"],
     sales: ["Sales", "Record what you sold today"],
     expenses: ["Matumizi", "Shop expenses — rent, transport, salaries… (shared with the POS)"],
     settings: ["Settings", "Manage your passwords"],
@@ -744,6 +745,7 @@ function renderShell() {
     ["products", "📦", "Products"],
     ["mainstore", "🏪", "Dukani"],
     ["godown", "🏭", "Godown"],
+    ["received", "📥", "Mzigo Uliopokelewa"],
     ["sales", "💰", "Sales"],
     ["expenses", "💸", "Matumizi"],
     ["reports", "📊", "Reports"],
@@ -829,6 +831,7 @@ function renderPage(page) {
   if (page === "expenses") return renderExpensesPage();
   if (page === "mainstore") return renderMainStorePage("dukani");
   if (page === "godown") return renderMainStorePage("godown");
+  if (page === "received") return renderReceivedPage();
   if (page === "sales") return renderSalesPage();
   if (page === "owed") return guardFinancials(() => renderColumnPage("owed_to_me"));
   if (page === "owe") return guardFinancials(() => renderColumnPage("i_owe"));
@@ -5088,6 +5091,7 @@ function renderMainStorePage(store) {
       ${!receiveOpen ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-sm btn-primary" onclick="startReceiveStock('${store}')">📥 Pokea Mzigo (from Supplier)</button>
         <button class="btn btn-sm btn-ghost" onclick="seedAllProducts('${store}')">🌱 Stock All Products (100 each)</button>
+        ${store === "dukani" ? `<button class="btn btn-sm" style="background:var(--rust);color:#fff" onclick="moveAllDukaniToGodown()">🏪➡️🏭 Hamishia stock yote Godown</button>` : ""}
       </div>` : ""}
     </div>
     ${receiveOpen ? renderReceiveForm() : ""}
@@ -5136,6 +5140,241 @@ function renderMainStorePage(store) {
   </div>` : ""}`;
 }
 
+
+/* ---------- 📥 MZIGO ULIOPOKELEWA — Dukani, Godown au zote kwa pamoja ----------
+   Inaonyesha kila stock iliyoingia (type "in") — kwa siku au kwa bidhaa, na Print / PDF.
+   Uhamisho wa Godown → Dukani si mzigo mpya: unafichwa ukiangalia "Zote" ili usihesabiwe mara mbili. */
+const rcvNum = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
+const rcvDay = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+function rcvState() {
+  return UI.rcv || (UI.rcv = { store: "all", from: "", to: "", q: "", transfers: false, view: "day", open: {}, sel: {} });
+}
+function rcvRange(kind) {
+  const f = rcvState(), t = todayStr();
+  if (kind === "today") { f.from = t; f.to = t; }
+  else if (kind === "week") { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); f.from = rcvDay(d); f.to = t; }
+  else if (kind === "month") { f.from = t.slice(0, 8) + "01"; f.to = t; }
+  else { f.from = ""; f.to = ""; }
+  rerender();
+}
+function rcvRows() {
+  const f = rcvState(), q = (f.q || "").trim().toLowerCase();
+  const rows = [];
+  for (const m of STATE.stockMovements) {
+    if (m.type !== "in" || m.hidden) continue;
+    const it = itemById(m.itemId); if (!it) continue;
+    const store = it.store || "dukani";
+    if (f.store !== "all" && store !== f.store) continue;
+    const isTransfer = /^(godown|dukani) transfer$/i.test(m.supplier || "");
+    if (isTransfer && !f.transfers) continue;
+    if (f.from && m.date < f.from) continue;
+    if (f.to && m.date > f.to) continue;
+    if (q && !it.name.toLowerCase().includes(q) && !String(m.supplier || "").toLowerCase().includes(q)) continue;
+    const price = m.price != null && m.price !== "" ? Number(m.price) : null;
+    rows.push({ id: m.id, date: m.date, name: it.name, store, supplier: isTransfer ? (/^dukani/i.test(m.supplier) ? "Kutoka Dukani" : "Kutoka Godown") : (m.supplier || "—"), qty: Number(m.qty) || 0, price, total: price != null ? price * (Number(m.qty) || 0) : null });
+  }
+  return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.name.localeCompare(b.name)));
+}
+function rcvByItem(rows) {
+  const map = {};
+  rows.forEach((r) => {
+    const k = r.name.toLowerCase();
+    const x = map[k] || (map[k] = { name: r.name, dukani: 0, godown: 0, qty: 0, value: 0, times: 0, last: "" });
+    x[r.store] = (x[r.store] || 0) + r.qty; x.qty += r.qty; x.value += r.total || 0; x.times++; if (r.date > x.last) x.last = r.date;
+  });
+  return Object.values(map).sort((a, b) => a.name.localeCompare(b.name));
+}
+const RCV_STORE = { dukani: "Dukani", godown: "Godown" };
+function rcvTitle() {
+  const f = rcvState();
+  const where = f.store === "all" ? "Dukani + Godown" : RCV_STORE[f.store];
+  const when = f.from || f.to ? (f.from || "mwanzo") + " hadi " + (f.to || todayStr()) : "Tarehe zote";
+  return { where, when };
+}
+function renderReceivedPage() {
+  const f = rcvState();
+  const rows = rcvRows();
+  const qty = rows.reduce((a, r) => a + r.qty, 0);
+  const value = rows.reduce((a, r) => a + (r.total || 0), 0);
+  const items = new Set(rows.map((r) => r.name.toLowerCase())).size;
+  const dQty = rows.filter((r) => r.store === "dukani").reduce((a, r) => a + r.qty, 0);
+  const gQty = rows.filter((r) => r.store === "godown").reduce((a, r) => a + r.qty, 0);
+  const tab = (id, label) => `<button class="btn btn-sm ${f.store === id ? "btn-primary" : "btn-ghost"}" onclick="rcvState().store='${id}';rerender();">${label}</button>`;
+  const vtab = (id, label) => `<button class="btn btn-sm ${f.view === id ? "btn-primary" : "btn-ghost"}" onclick="rcvState().view='${id}';rerender();">${label}</button>`;
+  const { where, when } = rcvTitle();
+  const shown = new Set(rows.map((r) => String(r.id)));
+  Object.keys(f.sel).forEach((k) => { if (!shown.has(k)) delete f.sel[k]; });
+  const selN = Object.keys(f.sel).length;
+  return `
+  <div class="panel no-print">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <b style="font-size:13px">Stoo:</b> ${tab("all", "🏪🏭 Zote kwa pamoja")} ${tab("dukani", "🏪 Dukani")} ${tab("godown", "🏭 Godown")}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <b style="font-size:13px">Tarehe:</b>
+      <button class="btn btn-sm btn-ghost" onclick="rcvRange('today')">Leo</button>
+      <button class="btn btn-sm btn-ghost" onclick="rcvRange('week')">Wiki hii</button>
+      <button class="btn btn-sm btn-ghost" onclick="rcvRange('month')">Mwezi huu</button>
+      <button class="btn btn-sm btn-ghost" onclick="rcvRange('all')">Zote</button>
+      <label style="font-size:12px;color:#6b7280">Kuanzia</label>
+      <input class="field field-sm" style="width:auto" type="date" value="${esc(f.from)}" onchange="rcvState().from=this.value;rerender();">
+      <label style="font-size:12px;color:#6b7280">Mpaka</label>
+      <input class="field field-sm" style="width:auto" type="date" value="${esc(f.to)}" onchange="rcvState().to=this.value;rerender();">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input id="rcv-search" class="field field-sm" style="max-width:240px" placeholder="🔍 Tafuta bidhaa au supplier..." value="${esc(f.q)}" oninput="rcvState().q=this.value;softRerender();">
+      <label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" ${f.transfers ? "checked" : ""} onchange="rcvState().transfers=this.checked;rerender();"> Onyesha uhamisho kati ya Dukani na Godown</label>
+      <span style="flex:1"></span>
+      ${vtab("day", "📅 Kwa siku")} ${vtab("item", "📦 Kwa bidhaa")}
+      <button class="btn btn-sm btn-primary" ${rows.length ? "" : "disabled"} onclick="printReceived()">🖨️ Print</button>
+      <button class="btn btn-sm btn-primary" ${rows.length ? "" : "disabled"} onclick="pdfReceived()">📄 PDF</button>
+    </div>
+    ${rows.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)">
+      <b style="font-size:13px">🗑️ Futa:</b>
+      <button class="btn btn-sm btn-ghost" onclick="rcvSelectAll(true)">☑️ Chagua zote (${rows.length})</button>
+      ${selN ? `<button class="btn btn-sm btn-ghost" onclick="rcvSelectAll(false)">Ondoa chaguo</button>` : ""}
+      <button class="btn btn-sm" style="background:var(--rust);color:#fff" ${selN ? "" : "disabled"} onclick="rcvDeleteSelected()">🗑️ Futa zilizochaguliwa (${selN})</button>
+      <span style="font-size:11.5px;color:#6b7280">Inafuta kumbukumbu tu — idadi ya stock Dukani na Godown haibadiliki.</span>
+    </div>` : ""}
+  </div>
+
+  <div class="cards no-print" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-top:14px">
+    ${statCard("Idadi iliyopokelewa", rcvNum(qty), where, "blue")}
+    ${f.store === "all" ? statCard("Dukani / Godown", rcvNum(dQty) + " / " + rcvNum(gQty), "idadi kwa kila stoo", "purple") : ""}
+    ${statCard("Bidhaa tofauti", rcvNum(items), rows.length + " mara za kupokea", "green")}
+    ${statCard("Thamani (bei ya kununua)", fmt(value), "pale bei iliwekwa", "orange")}
+  </div>
+
+  <div class="panel" style="margin-top:14px" id="received-print">
+    <div class="print-only-head" style="text-align:center;margin-bottom:8px">
+      <h3 style="margin:0">MZIGO ULIOPOKELEWA — ${esc(where)}</h3>
+      <div style="font-size:12px;color:#6b7280">${esc(when)}${f.q ? " · Utafutaji: " + esc(f.q) : ""}</div>
+    </div>
+    ${!rows.length ? `<p class="empty-note">Hakuna mzigo uliopokelewa kwa machaguo haya.</p>` : f.view === "item" ? rcvItemTable(rows, f) : rcvDayTables(rows, f)}
+    ${rows.length ? `<div style="display:flex;justify-content:flex-end;gap:18px;font-weight:700;margin-top:10px;font-size:13px"><span>Jumla idadi: ${rcvNum(qty)}</span><span>Jumla thamani: ${fmt(value)}</span></div>` : ""}
+  </div>`;
+}
+function rcvItemTable(rows, f) {
+  const list = rcvByItem(rows), both = f.store === "all";
+  return `<table class="recent-table"><thead><tr><th class="no-print" style="width:28px"></th><th>Bidhaa</th>${both ? "<th style='text-align:right'>Dukani</th><th style='text-align:right'>Godown</th>" : ""}<th style="text-align:right">Jumla idadi</th><th style="text-align:right">Mara</th><th>Mara ya mwisho</th><th style="text-align:right">Thamani</th></tr></thead><tbody>
+    ${list.map((x) => { const ids = rows.filter((r) => r.name.toLowerCase() === x.name.toLowerCase()).map((r) => r.id); return `<tr><td class="no-print"><input type="checkbox" ${ids.every((id) => f.sel[id]) ? "checked" : ""} onchange="rcvToggleMany('${ids.join(",")}',this.checked)"></td><td>${esc(x.name)}</td>${both ? `<td style="text-align:right">${rcvNum(x.dukani)}</td><td style="text-align:right">${rcvNum(x.godown)}</td>` : ""}<td style="text-align:right"><b>${rcvNum(x.qty)}</b></td><td style="text-align:right">${x.times}</td><td>${x.last}</td><td style="text-align:right">${x.value ? fmt(x.value) : "—"}</td></tr>`; }).join("")}
+  </tbody></table>`;
+}
+function rcvDayTables(rows, f) {
+  const days = {};
+  rows.forEach((r) => (days[r.date] = days[r.date] || []).push(r));
+  const both = f.store === "all";
+  return Object.keys(days).sort((a, b) => (a < b ? 1 : -1)).map((d, i) => {
+    const list = days[d];
+    const open = f.open[d] != null ? f.open[d] : i < 3;
+    const dq = list.reduce((a, r) => a + r.qty, 0), dv = list.reduce((a, r) => a + (r.total || 0), 0);
+    return `<div style="border:1px solid var(--line);border-radius:8px;margin-bottom:8px;overflow:hidden">
+      <button class="history-toggle no-print" style="width:100%;justify-content:space-between;padding:10px 12px;margin:0" onclick="rcvState().open['${d}']=!${open};rerender();">
+        <span>📅 ${d} — ${list.length} bidhaa · ${rcvNum(dq)} pcs${dv ? " · " + fmt(dv) : ""}</span><span>${open ? "▲" : "▼"}</span></button>
+      <div class="rcv-day ${open ? "" : "rcv-closed"}" style="${open ? "" : "display:none"}">
+        <div class="print-day-label" style="font-weight:700;font-size:12.5px;padding:6px 10px">${d}</div>
+        <table class="recent-table"><thead><tr><th class="no-print" style="width:28px"><input type="checkbox" title="Chagua siku nzima" ${list.every((r) => f.sel[r.id]) ? "checked" : ""} onchange="rcvSelectDay('${d}',this.checked)"></th><th>Bidhaa</th>${both ? "<th>Stoo</th>" : ""}<th>Supplier</th><th style="text-align:right">Idadi</th><th style="text-align:right">Bei</th><th style="text-align:right">Jumla</th></tr></thead><tbody>
+        ${list.map((r) => `<tr><td class="no-print"><input type="checkbox" ${f.sel[r.id] ? "checked" : ""} onchange="rcvToggle('${r.id}',this.checked)"></td><td>${esc(r.name)}</td>${both ? `<td>${RCV_STORE[r.store]}</td>` : ""}<td>${esc(r.supplier)}</td><td style="text-align:right">${rcvNum(r.qty)}</td><td style="text-align:right">${r.price != null ? fmt(r.price) : "—"}</td><td style="text-align:right">${r.total != null ? fmt(r.total) : "—"}</td></tr>`).join("")}
+        </tbody></table>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function rcvToggle(id, on) { const f = rcvState(); if (on) f.sel[id] = id; else delete f.sel[id]; rerender(); }
+function rcvToggleMany(ids, on) { const f = rcvState(); String(ids).split(",").filter(Boolean).forEach((id) => { if (on) f.sel[id] = id; else delete f.sel[id]; }); rerender(); }
+function rcvSelectDay(d, on) { rcvToggleMany(rcvRows().filter((r) => r.date === d).map((r) => r.id).join(","), on); }
+function rcvSelectAll(on) { const f = rcvState(); f.sel = {}; if (on) rcvRows().forEach((r) => (f.sel[r.id] = r.id)); rerender(); }
+function rcvDeleteSelected() {
+  const f = rcvState();
+  const rows = rcvRows().filter((r) => f.sel[r.id]);
+  if (!rows.length) return;
+  const d = rows.filter((r) => r.store === "dukani").length, g = rows.length - d;
+  const v = prompt(`FUTA kumbukumbu ${rows.length} za mzigo uliopokelewa?\n(Dukani: ${d} · Godown: ${g})\n\nStock HAIBADILIKI — idadi inabaki kama ilivyo sasa.\nKumbukumbu hizi hazitaonekana tena kwenye orodha.\n\nAndika FUTA kuthibitisha:`);
+  if (v == null || v.trim().toUpperCase() !== "FUTA") return;
+  const ids = new Set(rows.map((r) => String(r.id)));
+  STATE.stockMovements = STATE.stockMovements.map((m) => (ids.has(String(m.id)) ? { ...m, hidden: true } : m));
+  saveStockMovements();
+  f.sel = {};
+  UI.toastMsg = "✅ Zimefutwa " + rows.length + " — stock haijabadilika.";
+  rerender();
+}
+function printReceived() {
+  const el = document.getElementById("received-print");
+  if (!el) return;
+  // siku zilizofungwa nazo zichapishwe
+  const closed = [...el.querySelectorAll(".rcv-closed")]; closed.forEach((x) => (x.style.display = ""));
+  el.classList.add("receipt-print");
+  const done = () => { el.classList.remove("receipt-print"); closed.forEach((x) => (x.style.display = "none")); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 60000);
+}
+async function pdfReceived() {
+  const rows = rcvRows(); if (!rows.length) return;
+  try {
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+    await loadScriptOnce("https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js");
+  } catch (e) { alert("Imeshindikana kupakua PDF — angalia internet kisha jaribu tena."); return; }
+  const f = rcvState(), both = f.store === "all";
+  const { where, when } = rcvTitle();
+  const tz = (n) => Math.round(n).toLocaleString("en-US");
+  const doc = new window.jspdf.jsPDF({ unit: "mm", format: "a4" });
+  doc.setFontSize(15); doc.setFont(undefined, "bold"); doc.text("E.E.MSANGO COMPANY LIMITED", 105, 16, { align: "center" });
+  doc.setFontSize(12); doc.text("MZIGO ULIOPOKELEWA — " + where, 105, 24, { align: "center" }); doc.setFont(undefined, "normal");
+  doc.setFontSize(9.5); doc.text(when + (f.q ? "  ·  Utafutaji: " + f.q : ""), 105, 30, { align: "center" });
+  let head, body;
+  if (f.view === "item") {
+    head = [["Bidhaa"].concat(both ? ["Dukani", "Godown"] : [], ["Jumla", "Mara", "Mwisho", "Thamani"])];
+    body = rcvByItem(rows).map((x) => [x.name].concat(both ? [tz(x.dukani), tz(x.godown)] : [], [tz(x.qty), x.times, x.last, x.value ? tz(x.value) : "-"]));
+  } else {
+    head = [["Tarehe", "Bidhaa"].concat(both ? ["Stoo"] : [], ["Supplier", "Idadi", "Bei", "Jumla"])];
+    body = rows.map((r) => [r.date, r.name].concat(both ? [RCV_STORE[r.store]] : [], [r.supplier, tz(r.qty), r.price != null ? tz(r.price) : "-", r.total != null ? tz(r.total) : "-"]));
+  }
+  const qty = rows.reduce((a, r) => a + r.qty, 0), value = rows.reduce((a, r) => a + (r.total || 0), 0);
+  doc.autoTable({ head, body, startY: 35, styles: { fontSize: 8.5 }, headStyles: { fillColor: [11, 27, 48] } });
+  const y = doc.lastAutoTable.finalY + 8;
+  doc.setFont(undefined, "bold"); doc.setFontSize(10.5);
+  doc.text("Jumla idadi: " + tz(qty) + "     Jumla thamani: TSh " + tz(value), 196, y, { align: "right" });
+  doc.save("mzigo-" + (f.store === "all" ? "zote" : f.store) + "-" + (f.from || "mwanzo") + "_" + (f.to || todayStr()) + ".pdf");
+}
+
+
+/* ---------- 🏪➡️🏭 Hamishia stock YOTE ya Dukani kwenda Godown ----------
+   Dukani inabaki na majina yote (idadi 0). Kila idadi chanya inahamia Godown kwa jina lilelile
+   (inatengeneza jina Godown kama halipo). Idadi hasi Dukani zinarekebishwa kuwa 0 (hazihamii Godown). */
+function moveAllDukaniToGodown() {
+  const items = storeItems("dukani");
+  const pos = items.filter((it) => qtyOf(it.id) > 0);
+  const neg = items.filter((it) => qtyOf(it.id) < 0);
+  if (!pos.length && !neg.length) { alert("Dukani hakuna stock ya kuhamisha — zote tayari ni 0."); return; }
+  const total = pos.reduce((a, it) => a + qtyOf(it.id), 0);
+  const v = prompt(`HAMISHIA stock yote ya Dukani kwenda Godown?\n\n• Bidhaa ${pos.length} (jumla pcs ${total.toLocaleString("en-US")}) zitahamia Godown\n${neg.length ? `• Bidhaa ${neg.length} zenye idadi hasi Dukani zitarekebishwa kuwa 0\n` : ""}• Majina yote yanabaki Dukani, idadi 0\n\nAndika HAMISHA kuthibitisha:`);
+  if (v == null || v.trim().toUpperCase() !== "HAMISHA") return;
+  const date = todayStr();
+  const godown = storeItems("godown");
+  pos.forEach((it) => {
+    const qty = qtyOf(it.id);
+    STATE.stockMovements.push({ id: uid(), itemId: it.id, type: "out", qty, destination: "Godown (transfer)", date });
+    let target = godown.find((g) => g.name.toLowerCase() === it.name.toLowerCase());
+    if (!target) {
+      target = { id: uid(), name: it.name, category: it.category, lowStockLimit: it.lowStockLimit, store: "godown" };
+      STATE.stockItems.push(target); godown.push(target);
+    }
+    const price = buyPriceOf(it);
+    if (price != null && target.buyPrice == null) target.buyPrice = price;
+    STATE.stockMovements.push({ id: uid(), itemId: target.id, type: "in", qty, supplier: "Dukani Transfer", date, price });
+  });
+  neg.forEach((it) => {
+    STATE.stockMovements.push({ id: uid(), itemId: it.id, type: "in", qty: -qtyOf(it.id), supplier: "Marekebisho (sifuri)", date, price: null, hidden: true });
+  });
+  invalidateStock();
+  saveStockItems();
+  saveStockMovements();
+  UI.err = null;
+  alert(`✅ Imekamilika: bidhaa ${pos.length} (pcs ${total.toLocaleString("en-US")}) zimehamia Godown.${neg.length ? `\n${neg.length} zenye idadi hasi zimewekwa 0.` : ""}\nDukani sasa: 0 kwa kila bidhaa — majina yamebaki.`);
+  rerender();
+}
 function seedAllProducts(store) {
   const existingNames = new Set(storeItems(store).map((it) => it.name.toLowerCase()));
   let added = 0;
@@ -5301,7 +5540,7 @@ function saveMovementEdit(id) {
     updated.price = priceVal2 ? Number(priceVal2) : null;
   }
   STATE.stockMovements = STATE.stockMovements.map((x) => (x.id === id ? updated : x));
-  if (m.type === "in" && updated.price != null && updated.supplier !== "Godown Transfer") {
+  if (m.type === "in" && updated.price != null && !/^(Godown|Dukani) Transfer$/.test(updated.supplier || "")) {
     const item = itemById(m.itemId);
     if (item) { setBuyPriceEverywhere(item.name, updated.price); saveStockItems(); saveProducts(); }
   }
