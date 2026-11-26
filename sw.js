@@ -5,7 +5,7 @@
      iliyohifadhiwa kwenye kifaa.
    - Haigusi kabisa muunganiko wa database (Firestore) — huo una cache yake. */
 const SCOPE = self.registration.scope;
-const CACHE = "ee-app-v1|" + SCOPE;
+const CACHE = "ee-app-v2|" + SCOPE;
 const CDN = /^https:\/\/(www\.gstatic\.com\/firebasejs\/|cdn\.jsdelivr\.net\/)/;
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -37,7 +37,8 @@ self.addEventListener("fetch", (e) => {
   e.respondWith(new Promise((resolve) => {
     let settled = false;
     const done = (r) => { if (!settled && r) { settled = true; resolve(r); } };
-    const net = fetch(req).then((res) => { put(req, res.clone()); return res; });
+    // "no-cache": kila mara uliza GitHub kama kuna toleo jipya (usitumie nakala ya dakika 10 ya browser)
+    const net = fetch(req.url, { cache: "no-cache", credentials: "same-origin" }).then((res) => { put(req, res.clone()); return res; });
     net.then(done, async () => { done((await cached(req, true)) || Response.error()); });
     setTimeout(async () => { if (!settled) { const hit = await cached(req); if (hit) done(hit); } }, 7000);
   }));

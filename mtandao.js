@@ -100,6 +100,39 @@
   }
   setInterval(bar, 5000); setTimeout(bar, 1500);
 
+  // ---- 🔄 toleo jipya: kila kifaa kinakagua chenyewe (kila dakika 2 na ukirudi kwenye app)
+  (function () {
+    var tag = document.querySelector('script[src*="app.js?v="],script[src*="pos.js?v="]');
+    var m = tag && tag.getAttribute("src").match(/(app|pos)\.js\?v=(\d+)/);
+    if (!m) return;
+    var name = m[1], mine = +m[2], ready = false;
+    function reload() { try { navigator.serviceWorker && navigator.serviceWorker.getRegistration().then(function (r) { r && r.update(); }); } catch (e) {} setTimeout(function () { location.reload(); }, 400); }
+    function banner() {
+      if (document.getElementById("ee-update")) return;
+      var d = document.createElement("div");
+      d.id = "ee-update";
+      d.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:99999;background:#0b1b30;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.3);font:600 13px system-ui;display:flex;gap:10px;align-items:center;max-width:92vw";
+      d.innerHTML = '<span>🔄 Toleo jipya la mfumo limefika</span><button style="background:#c9a24a;color:#0b1b30;border:0;border-radius:7px;padding:7px 12px;font-weight:700;cursor:pointer">Sasisha sasa</button>';
+      d.querySelector("button").onclick = reload;
+      document.body.appendChild(d);
+    }
+    function check() {
+      if (navigator.onLine === false) return;
+      fetch("./", { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (t) {
+        var n = (t.match(new RegExp(name + "\\.js\\?v=(\\d+)")) || [])[1];
+        if (n && +n > mine) { ready = true; banner(); }
+      }).catch(function () {});
+    }
+    // app ikirudi mbele (simu/tab) na toleo jipya lipo → sasisha moja kwa moja
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) return;
+      var a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+      if (ready && !typing) reload(); else check();
+    });
+    setTimeout(check, 8000);
+    setInterval(check, 120000);
+  })();
+
   // ---- service worker: mfumo ufunguke hata bila internet
   if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol)) {
     window.addEventListener("load", function () {
