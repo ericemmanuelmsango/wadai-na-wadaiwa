@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v55";
+const APP_VERSION = "v56";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -745,7 +745,6 @@ function renderShell() {
     ["products", "📦", "Products"],
     ["mainstore", "🏪", "Dukani"],
     ["godown", "🏭", "Godown"],
-    ["received", "📥", "Mzigo Uliopokelewa"],
     ["sales", "💰", "Sales"],
     ["expenses", "💸", "Matumizi"],
     ["reports", "📊", "Reports"],
@@ -5116,16 +5115,7 @@ function renderMainStorePage(store) {
     ${items.length === 0 ? `<p class="empty-note">No stock items yet. Receive your first delivery to get started.</p>` : renderStockByCategory(store)}
   </div>
 
-  <div class="panel" style="margin-top:16px">
-    <h3>📥 All Received — ${label} (${storeMovements(store).filter((m) => m.type === "in").length})</h3>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <input id="received-search-input-${store}" class="field field-sm" style="max-width:220px" placeholder="🔍 Search item..." value="${esc(UI.receivedSearch || "")}" oninput="UI.receivedSearch=this.value;softRerender();">
-      <label style="font-size:12px;color:#6b7280">📅 Date:</label>
-      <input class="field field-sm" style="width:auto" type="date" value="${esc(UI.stockDateFilter || "")}" onchange="UI.stockDateFilter=this.value;rerender();">
-      ${UI.stockDateFilter ? `<button class="btn btn-ghost btn-sm" onclick="UI.stockDateFilter='';rerender();">Clear</button>` : ""}
-    </div>
-    ${renderMovementsByMonth(storeMovements(store).filter((m) => m.type === "in" && (!UI.stockDateFilter || m.date === UI.stockDateFilter)), UI.receivedSearch, "openReceivedMonths" + store)}
-  </div>
+  ${renderReceivedPage(store)}
 
   ${store === "godown" ? `
   <div class="panel" style="margin-top:16px">
@@ -5191,8 +5181,10 @@ function rcvTitle() {
   const when = f.from || f.to ? (f.from || "mwanzo") + " hadi " + (f.to || todayStr()) : "Tarehe zote";
   return { where, when };
 }
-function renderReceivedPage() {
+function renderReceivedPage(embedStore) {
   const f = rcvState();
+  // ndani ya Dukani / Godown: kila ukiingia ukurasa, inaanza na stoo ya ukurasa huo
+  if (embedStore && f.page !== embedStore) { f.page = embedStore; f.store = embedStore; f.sel = {}; }
   const rows = rcvRows();
   const qty = rows.reduce((a, r) => a + r.qty, 0);
   const value = rows.reduce((a, r) => a + (r.total || 0), 0);
@@ -5206,7 +5198,7 @@ function renderReceivedPage() {
   Object.keys(f.sel).forEach((k) => { if (!shown.has(k)) delete f.sel[k]; });
   const selN = Object.keys(f.sel).length;
   return `
-  <div class="panel no-print">
+  ${embedStore ? `<div class="panel no-print" style="margin-top:16px;border-top:3px solid #c9a24a"><h3 style="margin:0 0 10px">📥 Mzigo Uliopokelewa — ${esc(where)} (${rows.length})</h3>` : `<div class="panel no-print">`}
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <b style="font-size:13px">Stoo:</b> ${tab("all", "🏪🏭 Zote kwa pamoja")} ${tab("dukani", "🏪 Dukani")} ${tab("godown", "🏭 Godown")}
     </div>
@@ -5254,6 +5246,22 @@ function renderReceivedPage() {
     ${rows.length ? `<div style="display:flex;justify-content:flex-end;gap:18px;font-weight:700;margin-top:10px;font-size:13px"><span>Jumla idadi: ${rcvNum(qty)}</span><span>Jumla thamani: ${fmt(value)}</span></div>` : ""}
   </div>`;
 }
+function rcvEditRow(r, cols) {
+  const m = STATE.stockMovements.find((x) => x.id === r.id) || {};
+  return `<tr class="no-print"><td colspan="${cols}">
+    <div class="entry-form" style="margin:6px 0">
+      <b style="font-size:12.5px">✏️ ${esc(r.name)}</b>
+      <input id="em-qty-${m.id}" class="field field-sm" type="text" inputmode="numeric" placeholder="Idadi" value="${m.qty}" oninput="this.value=sanitizeNum(this.value)">
+      <input id="em-supplier-${m.id}" class="field field-sm" placeholder="Supplier" value="${esc(m.supplier || "")}">
+      <input id="em-price-${m.id}" class="field field-sm" type="text" inputmode="decimal" placeholder="Bei ya kununua" value="${m.price != null ? m.price : ""}" oninput="this.value=sanitizeNum(this.value)">
+      <input id="em-date-${m.id}" class="field field-sm" type="date" value="${m.date}">
+      <div class="form-actions">
+        <button class="btn btn-ghost btn-sm" onclick="UI.editingMovementId=null;rerender();">Ghairi</button>
+        <button class="btn btn-primary btn-sm" onclick="saveMovementEdit('${m.id}')">Hifadhi</button>
+      </div>
+    </div>
+  </td></tr>`;
+}
 function rcvItemTable(rows, f) {
   const list = rcvByItem(rows), both = f.store === "all";
   return `<table class="recent-table"><thead><tr><th class="no-print" style="width:28px"></th><th>Bidhaa</th>${both ? "<th style='text-align:right'>Dukani</th><th style='text-align:right'>Godown</th>" : ""}<th style="text-align:right">Jumla idadi</th><th style="text-align:right">Mara</th><th>Mara ya mwisho</th><th style="text-align:right">Thamani</th></tr></thead><tbody>
@@ -5273,8 +5281,8 @@ function rcvDayTables(rows, f) {
         <span>📅 ${d} — ${list.length} bidhaa · ${rcvNum(dq)} pcs${dv ? " · " + fmt(dv) : ""}</span><span>${open ? "▲" : "▼"}</span></button>
       <div class="rcv-day ${open ? "" : "rcv-closed"}" style="${open ? "" : "display:none"}">
         <div class="print-day-label" style="font-weight:700;font-size:12.5px;padding:6px 10px">${d}</div>
-        <table class="recent-table"><thead><tr><th class="no-print" style="width:28px"><input type="checkbox" title="Chagua siku nzima" ${list.every((r) => f.sel[r.id]) ? "checked" : ""} onchange="rcvSelectDay('${d}',this.checked)"></th><th>Bidhaa</th>${both ? "<th>Stoo</th>" : ""}<th>Supplier</th><th style="text-align:right">Idadi</th><th style="text-align:right">Bei</th><th style="text-align:right">Jumla</th></tr></thead><tbody>
-        ${list.map((r) => `<tr><td class="no-print"><input type="checkbox" ${f.sel[r.id] ? "checked" : ""} onchange="rcvToggle('${r.id}',this.checked)"></td><td>${esc(r.name)}</td>${both ? `<td>${RCV_STORE[r.store]}</td>` : ""}<td>${esc(r.supplier)}</td><td style="text-align:right">${rcvNum(r.qty)}</td><td style="text-align:right">${r.price != null ? fmt(r.price) : "—"}</td><td style="text-align:right">${r.total != null ? fmt(r.total) : "—"}</td></tr>`).join("")}
+        <table class="recent-table"><thead><tr><th class="no-print" style="width:28px"><input type="checkbox" title="Chagua siku nzima" ${list.every((r) => f.sel[r.id]) ? "checked" : ""} onchange="rcvSelectDay('${d}',this.checked)"></th><th>Bidhaa</th>${both ? "<th>Stoo</th>" : ""}<th>Supplier</th><th style="text-align:right">Idadi</th><th style="text-align:right">Bei</th><th style="text-align:right">Jumla</th><th class="no-print"></th></tr></thead><tbody>
+        ${list.map((r) => UI.editingMovementId === r.id ? rcvEditRow(r, both ? 8 : 7) : `<tr><td class="no-print"><input type="checkbox" ${f.sel[r.id] ? "checked" : ""} onchange="rcvToggle('${r.id}',this.checked)"></td><td>${esc(r.name)}</td>${both ? `<td>${RCV_STORE[r.store]}</td>` : ""}<td>${esc(r.supplier)}</td><td style="text-align:right">${rcvNum(r.qty)}</td><td style="text-align:right">${r.price != null ? fmt(r.price) : "—"}</td><td style="text-align:right">${r.total != null ? fmt(r.total) : "—"}</td><td class="no-print" style="white-space:nowrap"><button class="icon-btn" style="color:#1677ff" title="Rekebisha" onclick="UI.editingMovementId='${r.id}';rerender();">✏️</button><button class="icon-btn" title="Futa kumbukumbu" onclick="deleteMovement('${r.id}')">🗑️</button></td></tr>`).join("")}
         </tbody></table>
       </div>
     </div>`;
