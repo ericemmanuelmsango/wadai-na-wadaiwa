@@ -30,7 +30,7 @@ if (CONFIG_IS_SET) {
   docRef = db.collection("wadai_na_wadaiwa").doc("data");
 }
 
-const APP_VERSION = "v57";
+const APP_VERSION = "v58";
 let STATE = { posSales: [], entries: [], products: [], stockItems: [], stockMovements: [], sales: [], deliveries: [], settings: { appPassword: null, reportsPassword: "eric1234" } };
 let STATE_LOADED = false;
 let AUTH_READY = false;
@@ -309,8 +309,42 @@ function oneTimeProductImport() {
 /* Nakala ya hati zote kwenye kumbukumbu: kila badiliko linasoma hati zilizobadilika TU (si zote — picha
    na sehemu kubwa zilikuwa zinasomwa upya kila mauzo, mfumo ukawa mzito kwenye tablet). */
 const _DOCS = {}, _DOC_KB = {};
+
+/* ---------- ⚡ LIVE SYNC — data zifike kwenye vifaa vyote papo hapo ----------
+   Firestore inatuma kila badiliko kwa vifaa vyote vilivyo wazi. Mlinzi huyu anahakikisha
+   kifaa HAKIKOSI mabadiliko ya wengine: app ikirudi kwenye skrini (baada ya >20s), internet
+   ikirudi, au kifaa kikikatika na cloud >20s wakati internet ipo → anaunganisha upya
+   (Firestore inachukua mabadiliko yaliyokosekana tu, si data zote). */
+const LIVE = (function () {
+  let cacheSince = 0, hiddenAt = 0, busy = false, lastTry = 0, tries = 0;
+  function mark(meta) {
+    if (!meta) return;
+    if (meta.fromCache) { if (!cacheSince) cacheSince = Date.now(); } else { cacheSince = 0; tries = 0; }
+  }
+  function reconnect() {
+    if (busy || navigator.onLine === false || !db) return;
+    busy = true; lastTry = Date.now(); tries++;
+    db.disableNetwork().catch(() => {}).then(() => db.enableNetwork()).catch(() => {}).then(() => { busy = false; });
+  }
+  setInterval(() => {
+    if (document.hidden || navigator.onLine === false) return;
+    const wait = 30000 * Math.min(tries + 1, 6);          // 30s, 60s ... mpaka dakika 3 kati ya majaribio
+    if (Date.now() - lastTry < wait) return;
+    const stuckOffline = cacheSince && Date.now() - cacheSince > 20000;   // haijaunganika na cloud >20s
+    // (data zinazokwama KUTUMWA zinashughulikiwa na mtandao.js)
+    if (stuckOffline) reconnect();
+  }, 10000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 20000) reconnect();   // app imerudi kwenye skrini → chukua mabadiliko mapya mara moja
+  });
+  window.addEventListener("online", () => setTimeout(reconnect, 500));
+  return { mark, reconnect };
+})();
+
 function startSplitListener() {
   return colRef.onSnapshot({ includeMetadataChanges: true }, (snap) => {
+    LIVE.mark(snap.metadata);
     const changes = typeof snap.docChanges === "function" ? snap.docChanges() : null;
     if (changes && Object.keys(_DOCS).length) {
       changes.forEach((c) => { const id = c.doc.id; if (c.type === "removed") { delete _DOCS[id]; delete _DOC_KB[id]; } else { _DOCS[id] = c.doc.data(); _DOC_KB[id] = -1; } });
@@ -377,6 +411,7 @@ function startSplitListener() {
 }
 function startLegacyListener() {
   return docRef.onSnapshot({ includeMetadataChanges: true }, (doc) => {
+    LIVE.mark(doc.metadata);
     UI.sync = { fromCache: doc.metadata.fromCache, pending: doc.metadata.hasPendingWrites, at: new Date() };
     const data = doc.exists ? doc.data() : {};
     STORAGE_INFO = { parts: 1, biggestKB: Math.round(JSON.stringify(data).length / 1024) };
@@ -5090,7 +5125,6 @@ function renderMainStorePage(store) {
       ${!receiveOpen ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-sm btn-primary" onclick="startReceiveStock('${store}')">📥 Pokea Mzigo (from Supplier)</button>
         <button class="btn btn-sm btn-ghost" onclick="seedAllProducts('${store}')">🌱 Stock All Products (100 each)</button>
-        ${store === "dukani" ? `<button class="btn btn-sm" style="background:var(--rust);color:#fff" onclick="moveAllDukaniToGodown()">🏪➡️🏭 Hamishia stock yote Godown</button>` : ""}
       </div>` : ""}
     </div>
     ${receiveOpen ? renderReceiveForm() : ""}
@@ -5348,41 +5382,6 @@ async function pdfReceived() {
 }
 
 
-/* ---------- 🏪➡️🏭 Hamishia stock YOTE ya Dukani kwenda Godown ----------
-   Dukani inabaki na majina yote (idadi 0). Kila idadi chanya inahamia Godown kwa jina lilelile
-   (inatengeneza jina Godown kama halipo). Idadi hasi Dukani zinarekebishwa kuwa 0 (hazihamii Godown). */
-function moveAllDukaniToGodown() {
-  const items = storeItems("dukani");
-  const pos = items.filter((it) => qtyOf(it.id) > 0);
-  const neg = items.filter((it) => qtyOf(it.id) < 0);
-  if (!pos.length && !neg.length) { alert("Dukani hakuna stock ya kuhamisha — zote tayari ni 0."); return; }
-  const total = pos.reduce((a, it) => a + qtyOf(it.id), 0);
-  const v = prompt(`HAMISHIA stock yote ya Dukani kwenda Godown?\n\n• Bidhaa ${pos.length} (jumla pcs ${total.toLocaleString("en-US")}) zitahamia Godown\n${neg.length ? `• Bidhaa ${neg.length} zenye idadi hasi Dukani zitarekebishwa kuwa 0\n` : ""}• Majina yote yanabaki Dukani, idadi 0\n\nAndika HAMISHA kuthibitisha:`);
-  if (v == null || v.trim().toUpperCase() !== "HAMISHA") return;
-  const date = todayStr();
-  const godown = storeItems("godown");
-  pos.forEach((it) => {
-    const qty = qtyOf(it.id);
-    STATE.stockMovements.push({ id: uid(), itemId: it.id, type: "out", qty, destination: "Godown (transfer)", date });
-    let target = godown.find((g) => g.name.toLowerCase() === it.name.toLowerCase());
-    if (!target) {
-      target = { id: uid(), name: it.name, category: it.category, lowStockLimit: it.lowStockLimit, store: "godown" };
-      STATE.stockItems.push(target); godown.push(target);
-    }
-    const price = buyPriceOf(it);
-    if (price != null && target.buyPrice == null) target.buyPrice = price;
-    STATE.stockMovements.push({ id: uid(), itemId: target.id, type: "in", qty, supplier: "Dukani Transfer", date, price });
-  });
-  neg.forEach((it) => {
-    STATE.stockMovements.push({ id: uid(), itemId: it.id, type: "in", qty: -qtyOf(it.id), supplier: "Marekebisho (sifuri)", date, price: null, hidden: true });
-  });
-  invalidateStock();
-  saveStockItems();
-  saveStockMovements();
-  UI.err = null;
-  alert(`✅ Imekamilika: bidhaa ${pos.length} (pcs ${total.toLocaleString("en-US")}) zimehamia Godown.${neg.length ? `\n${neg.length} zenye idadi hasi zimewekwa 0.` : ""}\nDukani sasa: 0 kwa kila bidhaa — majina yamebaki.`);
-  rerender();
-}
 function seedAllProducts(store) {
   const existingNames = new Set(storeItems(store).map((it) => it.name.toLowerCase()));
   let added = 0;
@@ -6177,8 +6176,12 @@ setTimeout(() => {
     document.body.appendChild(b);
   }
   setTimeout(check, 4000);
-  setInterval(check, 5 * 60 * 1000);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+  setInterval(check, 2 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    const a = document.activeElement, typing = a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName);
+    if (shown && !typing) location.replace(location.pathname + "?v=" + Date.now()); else check();
+  });
 })();
 
 /* =====================================================================
